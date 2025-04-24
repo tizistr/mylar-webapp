@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>re-sort</title>
+    <title>Mylar - Geological Analysis</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -11,6 +11,10 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="styles.css" />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css"
+    />
   </head>
   <body>
     <div class="frost-layer"></div>
@@ -45,37 +49,128 @@
       </div>
     </header>
     <div class="app-container">
-      <div class="sidebar">
+      <aside class="sidebar">
         <nav class="nav-list">
-          <div class="nav-item">
-            <button class="nav-button">Button 1</button>
+          <!-- Projects Section -->
+          <div class="nav-section">
+            <button class="nav-button" data-section="projects">
+              <i class="ti ti-folder"></i>
+              <span>Projects</span>
+              <i class="ti ti-chevron-down nav-arrow"></i>
+            </button>
+            <div class="nav-subsection" data-parent="projects">
+              <!-- Project 1 -->
+              <div class="nav-item">
+                <button class="nav-button" data-section="project-1">
+                  <i class="ti ti-folder-filled"></i>
+                  <span>Alpine Metamorphism</span>
+                  <i class="ti ti-chevron-down nav-arrow"></i>
+                </button>
+                <div class="nav-subsection" data-parent="project-1">
+                  <!-- Samples -->
+                  <button class="nav-button" data-section="samples">
+                    <i class="ti ti-microscope"></i>
+                    <span>Samples</span>
+                    <i class="ti ti-chevron-down nav-arrow"></i>
+                  </button>
+                  <div class="nav-subsection" data-parent="samples">
+                    <!-- Sample 1 -->
+                    <div class="nav-item">
+                      <button class="nav-button" data-section="sample-1">
+                        <i class="ti ti-rock"></i>
+                        <span>Sample A-001</span>
+                        <i class="ti ti-chevron-down nav-arrow"></i>
+                      </button>
+                      <div class="nav-subsection" data-parent="sample-1">
+                        <button class="nav-button" data-section="thin-sections">
+                          <i class="ti ti-microscope"></i>
+                          <span>Thin Sections</span>
+                        </button>
+                        <button class="nav-button" data-section="xrd">
+                          <i class="ti ti-chart-bar"></i>
+                          <span>XRD Analysis</span>
+                        </button>
+                        <button class="nav-button" data-section="chemical">
+                          <i class="ti ti-flask"></i>
+                          <span>Chemical Analysis</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <!-- Reports -->
+                  <button class="nav-button" data-section="reports">
+                    <i class="ti ti-file-text"></i>
+                    <span>Reports</span>
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
-          <div class="nav-item">
-            <button class="nav-button">Button 2</button>
+
+          <!-- Quick Access -->
+          <div class="nav-section">
+            <button class="nav-button" data-section="quick-access">
+              <i class="ti ti-star"></i>
+              <span>Quick Access</span>
+            </button>
+            <div class="nav-subsection" data-parent="quick-access">
+              <button class="nav-button" data-section="recent">
+                <i class="ti ti-clock"></i>
+                <span>Recent</span>
+              </button>
+              <button class="nav-button" data-section="favorites">
+                <i class="ti ti-heart"></i>
+                <span>Favorites</span>
+              </button>
+            </div>
           </div>
-          <div class="nav-item">
-            <button class="nav-button">Button 3</button>
+
+          <!-- Tools -->
+          <div class="nav-section">
+            <button class="nav-button" data-section="tools">
+              <i class="ti ti-tools"></i>
+              <span>Tools</span>
+            </button>
+            <div class="nav-subsection" data-parent="tools">
+              <button class="nav-button" data-section="analysis">
+                <i class="ti ti-chart-bar"></i>
+                <span>Analysis Tools</span>
+              </button>
+              <button class="nav-button" data-section="export">
+                <i class="ti ti-download"></i>
+                <span>Export Data</span>
+              </button>
+            </div>
           </div>
         </nav>
-      </div>
+      </aside>
       <main class="content">
-        <h1>Main Content</h1>
-        <p>This is the main content area.</p>
+        <!-- Content will be dynamically loaded here -->
+        <div class="content-placeholder">
+          <h1>Welcome to Mylar</h1>
+          <p>Select an item from the sidebar to view its contents.</p>
+        </div>
       </main>
     </div>
+    <script type="module">
+      import { NavigationManager } from "./components/navigation.js";
+
+      // Initialize navigation
+      const navigation = new NavigationManager();
+
+      // Theme toggle
+      const themeToggle = document.querySelector(".theme-toggle");
+      const html = document.documentElement;
+
+      // Check for saved theme preference
+      const savedTheme = localStorage.getItem("theme") || "light";
+      html.dataset.theme = savedTheme;
+
+      themeToggle.addEventListener("click", () => {
+        const newTheme = html.dataset.theme === "light" ? "dark" : "light";
+        html.dataset.theme = newTheme;
+        localStorage.setItem("theme", newTheme);
+      });
+    </script>
   </body>
-  <script>
-    const themeToggle = document.querySelector(".theme-toggle");
-    const html = document.documentElement;
-
-    // Check for saved theme preference
-    const savedTheme = localStorage.getItem("theme") || "light";
-    html.dataset.theme = savedTheme;
-
-    themeToggle.addEventListener("click", () => {
-      const newTheme = html.dataset.theme === "light" ? "dark" : "light";
-      html.dataset.theme = newTheme;
-      localStorage.setItem("theme", newTheme);
-    });
-  </script>
 </html>
