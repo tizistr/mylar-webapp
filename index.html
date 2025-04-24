@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>re-sort</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="frost-layer"></div>
+    <header class="app-header">
+      <div class="company-name">re-sort</div>
+      <div class="header-controls">
+        <div class="search-container">
+          <input type="text" class="search-input" placeholder="Search..." />
+          <button class="search-button">
+            <svg width="20" height="20" viewBox="0 0 20 20">
+              <path
+                d="M8.5 3a5.5 5.5 0 0 1 4.227 9.02l4.127 4.126a.5.5 0 0 1-.638.765l-.07-.057-4.126-4.127A5.5 5.5 0 1 1 8.5 3Zm0 1a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9Z"
+                fill="currentColor"
+              />
+            </svg>
+          </button>
+        </div>
+        <button class="theme-toggle">
+          <svg class="sun-icon" width="20" height="20" viewBox="0 0 20 20">
+            <path
+              d="M10 2a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 10 2Zm0 13a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2a.5.5 0 0 1 .5-.5Zm8-5.5a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2a.5.5 0 0 1 .5.5ZM5 10a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2a.5.5 0 0 1 .5.5Zm12.728 4.728a.5.5 0 0 1-.707 0l-1.414-1.414a.5.5 0 1 1 .707-.707l1.414 1.414a.5.5 0 0 1 0 .707ZM4.686 6.686a.5.5 0 0 1-.707 0L2.565 5.272a.5.5 0 1 1 .707-.707L4.686 5.98a.5.5 0 0 1 0 .707Zm12.728-3.728a.5.5 0 0 1 0 .707l-1.414 1.414a.5.5 0 1 1-.707-.707l1.414-1.414a.5.5 0 0 1 .707 0ZM4.686 13.314a.5.5 0 0 1 0 .707l-1.414 1.414a.5.5 0 0 1-.707-.707l1.414-1.414a.5.5 0 0 1 .707 0ZM10 6a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"
+              fill="currentColor"
+            />
+          </svg>
+          <svg class="moon-icon" width="20" height="20" viewBox="0 0 20 20">
+            <path
+              d="M10.75 3.266a.5.5 0 0 0-.75-.25A6 6 0 0 0 8.75 13.5a6 6 0 0 0 8.484-1.016.5.5 0 0 0-.334-.884 5.001 5.001 0 0 1-6.15-8.334Z"
+              fill="currentColor"
+            />
+          </svg>
+        </button>
+      </div>
+    </header>
+    <div class="app-container">
+      <div class="sidebar">
+        <nav class="nav-list">
+          <div class="nav-item">
+            <button class="nav-button">Button 1</button>
+          </div>
+          <div class="nav-item">
+            <button class="nav-button">Button 2</button>
+          </div>
+          <div class="nav-item">
+            <button class="nav-button">Button 3</button>
+          </div>
+        </nav>
+      </div>
+      <main class="content">
+        <h1>Main Content</h1>
+        <p>This is the main content area.</p>
+      </main>
+    </div>
+  </body>
+  <script>
+    const themeToggle = document.querySelector(".theme-toggle");
+    const html = document.documentElement;
+
+    // Check for saved theme preference
+    const savedTheme = localStorage.getItem("theme") || "light";
+    html.dataset.theme = savedTheme;
+
+    themeToggle.addEventListener("click", () => {
+      const newTheme = html.dataset.theme === "light" ? "dark" : "light";
+      html.dataset.theme = newTheme;
+      localStorage.setItem("theme", newTheme);
+    });
+  </script>
+</html>
