@@ -1,18 +1,32 @@
 {
   "name": "mylar-webapp",
+  "private": true,
   "version": "1.0.0",
   "description": "Geological Analysis Web Application",
   "main": "script.js",
   "type": "module",
   "scripts": {
-    "start": "vite",
+    "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.39.3"
+    "@supabase/supabase-js": "^2.39.3",
+    "dayjs": "^1.11.10"
   },
   "devDependencies": {
+    "path": "^0.12.7",
     "vite": "^5.0.12"
-  }
-} 
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tizistr/mylar-webapp.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/tizistr/mylar-webapp/issues"
+  },
+  "homepage": "https://github.com/tizistr/mylar-webapp#readme"
+}

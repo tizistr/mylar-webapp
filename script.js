@@ -1,163 +1,89 @@
-import { supabase, dataOperations } from './supabase.js';
-import { NavigationManager } from './components/navigation.js';
+import { supabase, dataOperations } from "./supabase.js";
+import { NavigationManager } from "./components/navigation.js";
+import { Roster } from "./components/Roster.js";
+import { TimeTable } from "./components/TimeTable.js";
 
-// Navigation handling
-document.addEventListener('DOMContentLoaded', async () => {
-    const navButtons = document.querySelectorAll('.nav-button');
-    const contentArea = document.querySelector('.content');
+// Initialize navigation manager
+const navigationManager = new NavigationManager();
 
-    // Load initial data
-    try {
-        const projects = await dataOperations.getProjects();
-        updateProjectsList(projects);
-    } catch (error) {
-        console.error('Error loading projects:', error);
-        showError('Failed to load projects');
-    }
+// Initialize components
+let roster = null;
+let timeTable = null;
 
-    // Handle navigation button clicks
-    navButtons.forEach(button => {
-        button.addEventListener('click', async (e) => {
-            e.stopPropagation();
-            
-            // Toggle active state
-            button.classList.toggle('active');
-            
-            // Toggle subsection visibility
-            const sectionId = button.getAttribute('data-section');
-            const subsection = document.querySelector(`.nav-subsection[data-parent="${sectionId}"]`);
-            if (subsection) {
-                subsection.classList.toggle('active');
-            }
+// Load initial data
+document.addEventListener("DOMContentLoaded", async () => {
+  try {
+    const projects = await dataOperations.getProjects();
+    updateProjectsList(projects);
 
-            // Update content area based on section
-            try {
-                await updateContent(sectionId);
-            } catch (error) {
-                console.error(`Error loading content for ${sectionId}:`, error);
-                showError(`Failed to load ${sectionId} content`);
-            }
-        });
-    });
-
-    // Function to update projects list
-    function updateProjectsList(projects) {
-        const projectsSection = document.querySelector('.nav-subsection[data-parent="projects"]');
-        if (!projectsSection) return;
-
-        projectsSection.innerHTML = projects.map(project => `
-            <div class="nav-item">
-                <button class="nav-button" data-section="project-${project.id}">
-                    <i class="ti ti-folder-filled"></i>
-                    <span>${project.name}</span>
-                    <i class="ti ti-chevron-down nav-arrow"></i>
-                </button>
-                <div class="nav-subsection" data-parent="project-${project.id}">
-                    <!-- Samples will be loaded dynamically -->
-                </div>
-            </div>
-        `).join('');
-    }
-
-    // Function to update content area
-    async function updateContent(sectionId) {
-        const contentPlaceholder = document.querySelector('.content-placeholder');
-        if (!contentPlaceholder) return;
-
-        if (sectionId.startsWith('project-')) {
-            const projectId = sectionId.split('-')[1];
-            const samples = await dataOperations.getSamples(projectId);
-            updateSamplesList(projectId, samples);
-            contentPlaceholder.innerHTML = `
-                <h1>${getSectionTitle(sectionId)}</h1>
-                <div class="samples-list">
-                    ${samples.map(sample => `
-                        <div class="sample-card">
-                            <h3>${sample.name}</h3>
-                            <p>${sample.description || 'No description available'}</p>
-                            <p>Type: ${sample.sample_type || 'Unknown'}</p>
-                            <p>Location: ${sample.location || 'Unknown'}</p>
-                        </div>
-                    `).join('')}
-                </div>
-            `;
-        } else {
-            contentPlaceholder.innerHTML = `
-                <h1>${getSectionTitle(sectionId)}</h1>
-                <p>Loading content for ${sectionId}...</p>
-            `;
+    // Initialize Roster when tab is activated
+    const rosterTab = document.getElementById("roster-tab");
+    if (rosterTab) {
+      rosterTab.addEventListener("shown.bs.tab", () => {
+        if (!roster) {
+          const rosterContainer = document.getElementById("rosterContainer");
+          if (rosterContainer) {
+            roster = new Roster(rosterContainer);
+          }
         }
+      });
     }
 
-    // Function to update samples list
-    function updateSamplesList(projectId, samples) {
-        const projectSection = document.querySelector(`.nav-subsection[data-parent="project-${projectId}"]`);
-        if (!projectSection) return;
-
-        const samplesButton = projectSection.querySelector('.nav-button[data-section="samples"]');
-        if (!samplesButton) return;
-
-        const samplesSubsection = projectSection.querySelector('.nav-subsection[data-parent="samples"]');
-        if (!samplesSubsection) return;
-
-        samplesSubsection.innerHTML = samples.map(sample => `
-            <div class="nav-item">
-                <button class="nav-button" data-section="sample-${sample.id}">
-                    <i class="ti ti-rock"></i>
-                    <span>${sample.name}</span>
-                    <i class="ti ti-chevron-down nav-arrow"></i>
-                </button>
-                <div class="nav-subsection" data-parent="sample-${sample.id}">
-                    <button class="nav-button" data-section="thin-sections-${sample.id}">
-                        <i class="ti ti-microscope"></i>
-                        <span>Thin Sections</span>
-                    </button>
-                    <button class="nav-button" data-section="xrd-${sample.id}">
-                        <i class="ti ti-chart-bar"></i>
-                        <span>XRD Analysis</span>
-                    </button>
-                    <button class="nav-button" data-section="chemical-${sample.id}">
-                        <i class="ti ti-flask"></i>
-                        <span>Chemical Analysis</span>
-                    </button>
-                </div>
-            </div>
-        `).join('');
-    }
-
-    // Helper function to get section titles
-    function getSectionTitle(sectionId) {
-        const button = document.querySelector(`.nav-button[data-section="${sectionId}"]`);
-        return button ? button.querySelector('span').textContent : 'Section';
-    }
-
-    // Helper function to show errors
-    function showError(message) {
-        const contentPlaceholder = document.querySelector('.content-placeholder');
-        if (contentPlaceholder) {
-            contentPlaceholder.innerHTML = `
-                <div class="error-message">
-                    <i class="ti ti-alert-circle"></i>
-                    <p>${message}</p>
-                </div>
-            `;
+    // Initialize TimeTable when tab is activated
+    const timeTrackingTab = document.getElementById("time-tracking-tab");
+    if (timeTrackingTab) {
+      timeTrackingTab.addEventListener("shown.bs.tab", () => {
+        if (!timeTable) {
+          const timeTableContainer =
+            document.getElementById("timeTableContainer");
+          if (timeTableContainer) {
+            timeTable = new TimeTable(timeTableContainer);
+          }
         }
+      });
     }
-
-    // Initialize navigation
-    new NavigationManager();
+  } catch (error) {
+    console.error("Error loading projects:", error);
+    showError("Failed to load projects");
+  }
 });
 
+// Helper function to update projects list
+function updateProjectsList(projects) {
+  const projectsList = document.querySelector(".projects-list");
+  if (projectsList) {
+    projectsList.innerHTML = projects
+      .map(
+        (project) => `
+            <div class="project-item">
+                <h3>${project.name}</h3>
+                <p>${project.description || ""}</p>
+            </div>
+        `
+      )
+      .join("");
+  }
+}
+
+// Helper function to show error messages
+function showError(message) {
+  const errorDiv = document.createElement("div");
+  errorDiv.className = "error-message";
+  errorDiv.textContent = message;
+  document.body.appendChild(errorDiv);
+  setTimeout(() => errorDiv.remove(), 3000);
+}
+
 // Theme toggle handling
-const themeToggle = document.querySelector('.theme-toggle');
+const themeToggle = document.querySelector(".theme-toggle");
 const html = document.documentElement;
 
 // Check for saved theme preference
-const savedTheme = localStorage.getItem('theme') || 'light';
+const savedTheme = localStorage.getItem("theme") || "light";
 html.dataset.theme = savedTheme;
 
-themeToggle.addEventListener('click', () => {
-    const newTheme = html.dataset.theme === 'light' ? 'dark' : 'light';
-    html.dataset.theme = newTheme;
-    localStorage.setItem('theme', newTheme);
-}); 
+themeToggle.addEventListener("click", () => {
+  const newTheme = html.dataset.theme === "light" ? "dark" : "light";
+  html.dataset.theme = newTheme;
+  localStorage.setItem("theme", newTheme);
+});

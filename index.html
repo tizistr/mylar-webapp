@@ -15,8 +15,163 @@
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css"
     />
+    <style>
+      #debug-console {
+        position: fixed;
+        bottom: 0;
+        right: 0;
+        width: 400px;
+        height: 300px;
+        background: rgba(0, 0, 0, 0.9);
+        color: #fff;
+        font-family: monospace;
+        padding: 10px;
+        overflow-y: auto;
+        z-index: 9999;
+        font-size: 12px;
+        border-top-left-radius: 8px;
+        display: block !important;
+      }
+      #debug-header {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 10px;
+        padding-bottom: 5px;
+        border-bottom: 1px solid #444;
+      }
+      #debug-header button {
+        background: none;
+        border: none;
+        color: #fff;
+        cursor: pointer;
+        padding: 2px 5px;
+      }
+      #debug-header button:hover {
+        color: #ff4444;
+      }
+      #debug-messages {
+        font-size: 11px;
+        line-height: 1.4;
+        height: calc(100% - 30px);
+        overflow-y: auto;
+      }
+      #debug-messages div {
+        margin-bottom: 3px;
+        word-wrap: break-word;
+        white-space: pre-wrap;
+      }
+      .timestamp {
+        color: #888;
+        margin-right: 5px;
+      }
+      .log-message {
+        color: #fff;
+      }
+      .error-message {
+        color: #ff4444;
+      }
+
+      /* Roster Styles */
+      .roster-container {
+        padding: 20px;
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      }
+
+      .add-shift-form {
+        max-width: 600px;
+        margin: 20px auto;
+        padding: 20px;
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      }
+
+      .form-group {
+        margin-bottom: 15px;
+      }
+
+      .form-group label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: 500;
+      }
+
+      .form-group input,
+      .form-group select,
+      .form-group textarea {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 14px;
+      }
+
+      .form-group textarea {
+        height: 100px;
+        resize: vertical;
+      }
+
+      .settings-container {
+        max-width: 600px;
+        margin: 20px auto;
+        padding: 20px;
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      }
+
+      .settings-group {
+        margin-bottom: 20px;
+      }
+
+      .settings-group h3 {
+        margin-bottom: 10px;
+        color: #333;
+      }
+
+      .settings-group label {
+        display: block;
+        margin-bottom: 10px;
+      }
+
+      button {
+        background: #007bff;
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+      }
+
+      button:hover {
+        background: #0056b3;
+      }
+
+      .error-message {
+        color: red;
+        padding: 1rem;
+        background: #fee;
+        border-radius: 4px;
+        margin: 1rem 0;
+      }
+    </style>
   </head>
   <body>
+    <div id="debug-console">
+      <div id="debug-header">
+        <span>Debug Console</span>
+        <button
+          onclick="this.parentElement.parentElement.style.height = this.parentElement.parentElement.style.height === '30px' ? '300px' : '30px'"
+        >
+          _
+        </button>
+      </div>
+      <div id="debug-messages"></div>
+    </div>
+
     <div class="frost-layer"></div>
     <header class="app-header">
       <div class="company-name">re-sort</div>
@@ -107,6 +262,22 @@
             </div>
           </div>
 
+          <!-- Calendar Section -->
+          <div class="nav-section">
+            <button class="nav-button" data-section="calendar">
+              <i class="ti ti-calendar"></i>
+              <span>Calendar</span>
+            </button>
+          </div>
+
+          <!-- Roster Section -->
+          <div class="nav-section">
+            <button class="nav-button" data-section="roster">
+              <i class="ti ti-users"></i>
+              <span>Roster</span>
+            </button>
+          </div>
+
           <!-- Quick Access -->
           <div class="nav-section">
             <button class="nav-button" data-section="quick-access">
@@ -142,6 +313,14 @@
               </button>
             </div>
           </div>
+
+          <!-- Time Tracking Section -->
+          <div class="nav-section">
+            <button class="nav-button" data-section="time-tracking">
+              <i class="ti ti-clock"></i>
+              <span>Time Tracking</span>
+            </button>
+          </div>
         </nav>
       </aside>
       <main class="content">
@@ -152,24 +331,75 @@
         </div>
       </main>
     </div>
+
     <script type="module">
-      import { NavigationManager } from "./components/navigation.js";
+      // Debug console functionality
+      const debugConsole = document.getElementById("debug-console");
+      const debugMessages = document.getElementById("debug-messages");
 
-      // Initialize navigation
-      const navigation = new NavigationManager();
+      // Override console.log and console.error
+      const originalLog = console.log;
+      const originalError = console.error;
 
-      // Theme toggle
-      const themeToggle = document.querySelector(".theme-toggle");
-      const html = document.documentElement;
+      function addMessage(type, args) {
+        const timestamp = new Date().toLocaleTimeString();
+        const message = args
+          .map((arg) =>
+            typeof arg === "object" ? JSON.stringify(arg, null, 2) : String(arg)
+          )
+          .join(" ");
 
-      // Check for saved theme preference
-      const savedTheme = localStorage.getItem("theme") || "light";
-      html.dataset.theme = savedTheme;
+        const div = document.createElement("div");
+        div.innerHTML = `<span class="timestamp">[${timestamp}]</span> <span class="${type}-message">${message}</span>`;
+        debugMessages.appendChild(div);
+        debugMessages.scrollTop = debugMessages.scrollHeight;
+      }
 
-      themeToggle.addEventListener("click", () => {
-        const newTheme = html.dataset.theme === "light" ? "dark" : "light";
-        html.dataset.theme = newTheme;
-        localStorage.setItem("theme", newTheme);
+      console.log = function (...args) {
+        originalLog.apply(console, args);
+        addMessage("log", args);
+      };
+
+      console.error = function (...args) {
+        originalError.apply(console, args);
+        addMessage("error", args);
+      };
+
+      // Test the console
+      console.log("Debug console initialized");
+
+      // Wait for DOM to be fully loaded
+      document.addEventListener("DOMContentLoaded", async () => {
+        try {
+          console.log("DOM fully loaded");
+
+          // Import navigation
+          const { NavigationManager } = await import(
+            "/components/navigation.js"
+          );
+          console.log("Navigation module loaded");
+
+          // Initialize theme
+          const html = document.documentElement;
+          const savedTheme = localStorage.getItem("theme") || "light";
+          html.dataset.theme = savedTheme;
+          console.log("Theme initialized:", savedTheme);
+
+          // Create navigation manager
+          window.navigationManager = new NavigationManager();
+          console.log("Navigation manager initialized");
+
+          // Theme toggle
+          const themeToggle = document.querySelector(".theme-toggle");
+          themeToggle?.addEventListener("click", () => {
+            const newTheme = html.dataset.theme === "light" ? "dark" : "light";
+            html.dataset.theme = newTheme;
+            localStorage.setItem("theme", newTheme);
+            console.log("Theme changed to:", newTheme);
+          });
+        } catch (error) {
+          console.error("Failed to initialize application:", error);
+        }
       });
     </script>
   </body>
