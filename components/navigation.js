@@ -1,7 +1,17 @@
-import { Calendar } from "@components/Calendar.js";
-import { Roster } from "@components/Roster.js";
-import { TimeTable } from "./TimeTable.js";
 import { dataOperations } from "../supabase.js";
+
+// Debounce utility function
+function debounce(func, wait) {
+  let timeout;
+  return function executedFunction(...args) {
+    const later = () => {
+      clearTimeout(timeout);
+      func(...args);
+    };
+    clearTimeout(timeout);
+    timeout = setTimeout(later, wait);
+  };
+}
 
 export class NavigationManager {
   constructor() {
@@ -122,11 +132,26 @@ export class NavigationManager {
         }
       };
 
-      searchInput.addEventListener("keypress", (e) => {
-        if (e.key === "Enter") {
-          handleSearch();
+      // Example: Debounced handler if we were searching on input
+      const debouncedSearchHandler = debounce(() => {
+        const query = searchInput.value.trim();
+        if (query) {
+          console.log("Debounced Search query:", query);
+          // Implement actual search-as-you-type logic here
         }
-      });
+      }, 300); // Wait 300ms after user stops typing
+
+      if (searchInput) {
+        // If you want search-as-you-type, use this:
+        // searchInput.addEventListener('input', debouncedSearchHandler);
+
+        // Keep existing Enter key listener
+        searchInput.addEventListener("keypress", (e) => {
+          if (e.key === "Enter") {
+            handleSearch(); // Keep immediate search on Enter
+          }
+        });
+      }
 
       searchButton.addEventListener("click", handleSearch);
     }
@@ -153,7 +178,9 @@ export class NavigationManager {
       switch (section) {
         case "roster":
         case "roster-view":
-          console.log("[NavigationManager] Showing roster");
+          console.log(
+            "[NavigationManager] Dynamically loading and showing roster"
+          );
           try {
             const container = document.createElement("div");
             container.style.width = "100%";
@@ -161,29 +188,39 @@ export class NavigationManager {
             container.style.overflow = "auto";
             container.style.position = "relative";
             container.classList.add("roster-view-container");
-            this.contentArea.innerHTML = "";
             this.contentArea.appendChild(container);
 
+            // Dynamic import for Roster
+            const { Roster } = await import("@components/Roster.js");
+            console.log("[NavigationManager] Roster module loaded");
+
             if (this.roster) {
-              // Clean up existing roster if it exists
+              // Optionally clean up existing roster if needed
+              // this.roster.destroy?.(); // If Roster class has a cleanup method
               this.roster = null;
             }
 
             this.roster = new Roster(container);
           } catch (error) {
             console.error(
-              "[NavigationManager] Failed to initialize roster:",
+              "[NavigationManager] Failed to load/initialize roster:",
               error
             );
-            this.contentArea.innerHTML = `
-              <div class="error-message">
-                Failed to initialize roster. Please try refreshing the page.
-              </div>
-            `;
+            this.showError("Failed to load roster: " + error.message);
           }
           break;
         case "roster-add":
           console.log("Showing add shift");
+          // Ensure Roster is loaded if needed for addShift logic
+          if (!this.roster) {
+            // Load roster implicitly if not already loaded
+            await this.handleNavigation("roster");
+            // Check if roster instance exists after loading attempt
+            if (!this.roster)
+              throw new Error(
+                "Roster instance not available for adding shift."
+              );
+          }
           await this.showAddShift();
           break;
         case "roster-settings":
@@ -191,13 +228,13 @@ export class NavigationManager {
           this.showRosterSettings();
           break;
         case "time-tracking":
-          console.log("[NavigationManager] Loading Time Tracking");
-          await this.loadTimeTracking();
+          console.log("[NavigationManager] Dynamically loading Time Tracking");
+          await this.loadTimeTracking(); // loadTimeTracking now handles dynamic import
           break;
         case "calendar":
         case "calendar-view":
-          console.log("Showing calendar");
-          await this.showCalendar();
+          console.log("[NavigationManager] Dynamically loading calendar");
+          await this.showCalendar(); // showCalendar now handles dynamic import
           break;
         case "calendar-add":
           console.log("Showing add event");
@@ -298,8 +335,13 @@ export class NavigationManager {
         };
 
         try {
+          // Ensure Roster is loaded if needed for addShift method
+          if (!this.roster) {
+            // Optionally add logic to load roster or handle error
+            throw new Error("Roster component not loaded.");
+          }
           await this.roster.addShift(formData);
-          this.handleNavigation("roster-view");
+          this.handleNavigation("roster-view"); // Navigate back to roster view
         } catch (error) {
           console.error("Error adding shift:", error);
           alert("Failed to add shift: " + error.message);
@@ -356,23 +398,22 @@ export class NavigationManager {
 
   async showCalendar() {
     try {
-      // Create calendar container
       this.contentArea.innerHTML = '<div class="calendar-container"></div>';
       const container = this.contentArea.querySelector(".calendar-container");
+      if (!container) throw new Error("Calendar container not found");
 
-      if (!container) {
-        throw new Error("Calendar container not found");
-      }
+      // Dynamic import for Calendar
+      const { Calendar } = await import("@components/Calendar.js");
+      console.log("[NavigationManager] Calendar module loaded");
 
-      // Initialize calendar
       if (!this.calendar) {
         this.calendar = new Calendar(container);
       } else {
-        this.calendar.container = container;
+        // Reuse existing instance but update container if needed
+        this.calendar.container = container; // Assuming Calendar can handle container changes
       }
 
-      // Initialize and render calendar
-      await this.calendar.init();
+      await this.calendar.init(); // Assuming init() fetches data and renders
     } catch (error) {
       console.error("Error showing calendar:", error);
       this.contentArea.innerHTML = `
@@ -386,10 +427,18 @@ export class NavigationManager {
   }
 
   async showAddEvent() {
+    // Ensure Calendar is loaded before showing modal
     if (!this.calendar) {
+      console.log(
+        "[NavigationManager] Loading Calendar before showing Add Event modal"
+      );
       await this.showCalendar();
+      // Check if calendar instance exists after loading attempt
+      if (!this.calendar)
+        throw new Error("Calendar instance not available for adding event.");
     }
     const today = new Date();
+    // Assuming Calendar instance now exists
     await this.calendar.showEventModal(today);
   }
 
@@ -539,7 +588,6 @@ export class NavigationManager {
   async loadTimeTracking() {
     console.log("[NavigationManager] Loading Time Tracking component");
     try {
-      // Create time tracking container
       const container = document.createElement("div");
       container.id = "timeTableContainer";
       container.style.width = "100%";
@@ -551,15 +599,21 @@ export class NavigationManager {
       this.contentArea.innerHTML = "";
       this.contentArea.appendChild(container);
 
-      // Initialize time table
+      // Dynamic import for TimeTable
+      const { TimeTable } = await import("./TimeTable.js");
+      console.log("[NavigationManager] TimeTable module loaded");
+
       if (!this.timeTable) {
         console.log("[NavigationManager] Creating new TimeTable instance");
         this.timeTable = new TimeTable(container);
       } else {
+        // Re-initialize or update existing instance
         console.log("[NavigationManager] Reusing existing TimeTable instance");
-        // Re-initialize with the new container
-        this.timeTable = new TimeTable(container);
+        // this.timeTable.destroy?.(); // Optional cleanup
+        this.timeTable = new TimeTable(container); // Recreate or update
       }
+      // Potentially call an init method if TimeTable has one
+      // await this.timeTable.init?.();
     } catch (error) {
       console.error("[NavigationManager] Error loading time tracking:", error);
       this.contentArea.innerHTML = `

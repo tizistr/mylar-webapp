@@ -10,18 +10,19 @@ export class Roster {
     // Initialize container with proper structure
     this.container = container;
     this.container.classList.add("roster-root-container");
-    this.container.style.height = "calc(100vh - 100px)";
-    this.container.style.display = "flex";
-    this.container.style.flexDirection = "column";
-    this.container.style.overflow = "hidden";
-
-    this.viewRange = 6; // months
+    this.viewRange = 2; // Start with 2 months
+    this.viewStartDate = new Date(
+      new Date().getFullYear(),
+      new Date().getMonth(),
+      1
+    ); // Start of current month
     this.workers = ["Toti", "Tizi"];
-    this.shifts = [];
-    this.selectedDate = null;
+    this.allShifts = []; // Store all fetched shifts
+    this.shifts = []; // Shifts currently in view
+    this.fetchedRange = { start: null, end: null }; // Track fetched range
+    this.selectedDate = null; // Keep if needed for other features, but not for view control
     this.employees = [];
     this.modal = null;
-    this.shiftMode = "day-night"; // 'day-only' or 'day-night'
     this.selectedCells = new Set(); // Store selected cell keys as 'worker|date'
     this.isSelecting = false;
     this.selectionStart = null;
@@ -42,228 +43,194 @@ export class Roster {
     }
   }
 
-  async loadInitialData() {
+  async loadInitialData(forceFetch = false) {
     try {
-      console.log("[Roster] Loading initial data");
+      console.log(
+        `[Roster] loadInitialData called. Current viewStartDate: ${this.viewStartDate.toISOString()}`
+      );
 
-      // Always use the current year and month for the timeline and query
-      const now = new Date();
-      const currentYear = now.getFullYear();
-      const currentMonth = now.getMonth();
+      // Define desired fetch range around the current view start date
+      const fetchLookBehindMonths = 6;
+      const fetchLookAheadMonths = 12; // Fetch a year ahead initially
+      const fetchStartDate = new Date(this.viewStartDate);
+      fetchStartDate.setMonth(
+        fetchStartDate.getMonth() - fetchLookBehindMonths
+      );
+      fetchStartDate.setDate(1); // Start of month
 
-      // Calculate start and end dates
-      const startDate = new Date(currentYear, currentMonth, 1);
-      const endDate = new Date(currentYear, currentMonth + this.viewRange, 0);
+      const fetchEndDate = new Date(this.viewStartDate);
+      fetchEndDate.setMonth(fetchEndDate.getMonth() + fetchLookAheadMonths);
+      fetchEndDate.setDate(0); // End of month
 
-      console.log("[Roster] Date range:", {
-        startDate: startDate.toISOString(),
-        endDate: endDate.toISOString(),
-        viewRange: this.viewRange,
-      });
+      // Check if cache covers the needed *fetch* range (wider than view range)
+      const needsFetch =
+        forceFetch ||
+        !this.fetchedRange.start ||
+        !this.fetchedRange.end ||
+        fetchStartDate < this.fetchedRange.start ||
+        fetchEndDate > this.fetchedRange.end;
 
-      // Check database structure first
-      const structureOk = await rosterApi.checkDatabaseStructure();
-      console.log("[Roster] Database structure check:", structureOk);
+      if (needsFetch) {
+        console.log(
+          `[Roster] Fetch needed. Fetching shifts for range: ${fetchStartDate.toISOString()} to ${fetchEndDate.toISOString()}`
+        );
+        this.container.classList.add("loading"); // Add loading indicator class
 
-      // Load shifts and employees in parallel
-      const [shifts, employees] = await Promise.all([
-        rosterApi.getShifts(startDate, endDate),
-        rosterApi.getEmployees(),
-      ]);
+        // Fetch employees only if needed (e.g., first time)
+        const fetchEmployees = this.workers.length <= 2; // Simple check, improve if needed
+        const promises = [rosterApi.getShifts(fetchStartDate, fetchEndDate)];
+        if (fetchEmployees) {
+          promises.push(rosterApi.getEmployees());
+        }
 
-      console.log("[Roster] Loaded shifts:", shifts);
-      console.log("[Roster] Loaded employees:", employees);
+        const results = await Promise.all(promises);
+        const apiShifts = results[0];
+        const employees = fetchEmployees ? results[1] : this.employees; // Use existing if not fetched
 
-      // If no employees loaded, use default workers
-      this.workers =
-        employees?.length > 0 ? employees.map((e) => e.name) : ["Toti", "Tizi"];
-      this.shifts = shifts || [];
+        console.log("[Roster] API Loaded shifts:", apiShifts);
+        this.allShifts = apiShifts || []; // Store all fetched shifts
+        this.workers =
+          employees?.length > 0
+            ? employees.map((e) => e.name)
+            : ["Toti", "Tizi"];
+        this.fetchedRange = { start: fetchStartDate, end: fetchEndDate }; // Update cached range
+        console.log(
+          `[Roster] Updated fetchedRange: ${this.fetchedRange.start.toISOString()} to ${this.fetchedRange.end.toISOString()}`
+        );
 
-      // Log shift dates for debugging
-      this.shifts.forEach((shift) => {
-        console.log("[Roster] Shift:", {
-          worker: shift.worker_name,
-          date: shift.shift_date,
-          type: shift.shift_type,
-          is_working: shift.is_working,
-        });
-      });
+        this.container.classList.remove("loading"); // Remove loading indicator
+      } else {
+        console.log("[Roster] Fetch not needed, cached range covers request.");
+      }
 
-      this.render();
+      // Always filter and render based on the current view settings
+      this.filterAndRender();
     } catch (error) {
       console.error("[Roster] Error loading initial data:", error);
       this.showError("Failed to load roster data. Please try again.");
+      this.container.classList.remove("loading");
     }
+  }
+
+  // New function to filter and render based on current view
+  filterAndRender() {
+    console.log(
+      `[Roster] Filtering and Rendering for view start: ${this.viewStartDate.toISOString()}, range: ${
+        this.viewRange
+      } months`
+    );
+
+    // Ensure viewStartDate is the start of a month for consistency
+    this.viewStartDate.setDate(1);
+
+    // Calculate current view end date based on viewStartDate and viewRange
+    const currentViewEndDate = new Date(this.viewStartDate);
+    currentViewEndDate.setMonth(currentViewEndDate.getMonth() + this.viewRange);
+    currentViewEndDate.setDate(0); // Last day of the month prior to the target month + viewRange
+
+    const viewStartStr = this.viewStartDate.toISOString().split("T")[0];
+    const viewEndStr = currentViewEndDate.toISOString().split("T")[0];
+
+    // Filter the stored shifts based on the current view window
+    this.shifts = this.allShifts.filter((shift) => {
+      return shift.shift_date >= viewStartStr && shift.shift_date <= viewEndStr;
+    });
+
+    console.log(
+      `[Roster] Filtered ${this.shifts.length} shifts for current view.`
+    );
+
+    // Now render the timeline and roster with the filtered shifts
+    this.render();
   }
 
   async setupUI() {
     console.log("[Roster] Setting up UI");
     this.container.innerHTML = `
-      <div class="roster-container" style="display: flex; flex-direction: column; height: 100%; background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-        <div class="roster-header" style="padding: 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee;">
+      <div class="roster-container">
+        <div class="roster-header">
           <h2>Staff Roster</h2>
-          <div class="roster-controls" style="display: flex; gap: 10px; align-items: center;">
-            <button id="prevMonth" style="padding: 8px 16px; border: none; border-radius: 4px; background: #007bff; color: white; cursor: pointer;">←</button>
-            <button id="zoomOut" style="padding: 8px 16px; border: none; border-radius: 4px; background: #007bff; color: white; cursor: pointer;">-</button>
-            <span id="viewRangeText">${this.viewRange} months</span>
-            <button id="zoomIn" style="padding: 8px 16px; border: none; border-radius: 4px; background: #007bff; color: white; cursor: pointer;">+</button>
-            <button id="nextMonth" style="padding: 8px 16px; border: none; border-radius: 4px; background: #007bff; color: white; cursor: pointer;">→</button>
-          </div>
         </div>
-        <div class="gantt-scroll-container" style="flex: 1; overflow: auto; position: relative; border: 1px solid #ddd; margin: 20px; border-radius: 4px;">
-          <div class="gantt-content" style="display: flex; flex-direction: column; min-width: fit-content;">
-            <div class="timeline" id="timeline" style="border-bottom: 1px solid #ddd; background: #f8f9fa; margin-left: 150px; position: sticky; top: 0; z-index: 2;"></div>
+        <div class="gantt-scroll-container">
+          <div class="gantt-content" style="position: relative;">
+            <div class="timeline" id="timeline"></div>
             <div class="roster" id="roster"></div>
           </div>
         </div>
+        <div class="loading-overlay">Loading...</div>
       </div>
-      <div id="shift-modal" class="modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;">
-        <div class="modal-content" style="background: white; margin: 10% auto; padding: 20px; width: 80%; max-width: 600px; border-radius: 4px; position: relative;">
-          <span class="close" style="position: absolute; right: 10px; top: 10px; font-size: 24px; cursor: pointer;">&times;</span>
+      <div id="shift-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+          <span class="close">&times;</span>
           <div id="modal-body"></div>
         </div>
       </div>
     `;
 
-    // Setup controls
-    const zoomIn = this.container.querySelector("#zoomIn");
-    const zoomOut = this.container.querySelector("#zoomOut");
-    const prevMonth = this.container.querySelector("#prevMonth");
-    const nextMonth = this.container.querySelector("#nextMonth");
-
-    if (zoomIn) {
-      zoomIn.addEventListener("click", () => {
-        if (this.viewRange > 1) {
-          this.viewRange--;
-          this.updateView();
-        }
-      });
-    }
-
-    if (zoomOut) {
-      zoomOut.addEventListener("click", () => {
-        if (this.viewRange < 12) {
-          this.viewRange++;
-          this.updateView();
-        }
-      });
-    }
-
-    if (prevMonth) {
-      prevMonth.addEventListener("click", () => {
-        const today = new Date();
-        today.setMonth(today.getMonth() - 1);
-        this.selectedDate = today;
-        this.updateView();
-      });
-    }
-
-    if (nextMonth) {
-      nextMonth.addEventListener("click", () => {
-        const today = new Date();
-        today.setMonth(today.getMonth() + 1);
-        this.selectedDate = today;
-        this.updateView();
-      });
-    }
+    // Setup controls - Removed Zoom listeners
 
     // Setup modal
     this.modal = this.container.querySelector("#shift-modal");
-    if (this.modal) {
-      const closeButton = this.modal.querySelector(".close");
-      if (closeButton) {
-        closeButton.addEventListener("click", () => this.closeModal());
-      }
-    }
+    this.modal
+      ?.querySelector(".close")
+      ?.addEventListener("click", () => this.closeModal());
 
-    // Add shift mode toggle to header
-    const header = this.container.querySelector(".roster-header");
-    if (header) {
-      const modeToggle = document.createElement("div");
-      modeToggle.style.display = "flex";
-      modeToggle.style.alignItems = "center";
-      modeToggle.style.gap = "8px";
-      modeToggle.style.marginLeft = "20px";
-      modeToggle.innerHTML = `
-        <label style="font-size:0.95em;">Shift Mode:</label>
-        <select id="shiftModeSelect" style="padding:2px 8px; border-radius:3px;">
-          <option value="day-night">Day & Night</option>
-          <option value="day-only">Day Only</option>
-        </select>
-      `;
-      header.appendChild(modeToggle);
-      const select = modeToggle.querySelector("#shiftModeSelect");
-      select.value = this.shiftMode;
-      select.addEventListener("change", (e) => {
-        this.shiftMode = e.target.value;
-        this.loadInitialData();
-      });
-    }
-
-    // Add base styles
+    this.updateViewControls(); // Call even without span to update other potential elements
     this.addStyles();
+
+    this.isLoadingMore = false; // Initialize flag here, used by load more button
   }
 
-  async updateView() {
-    console.log("[Roster] Updating view to", this.viewRange, "months");
-    const viewRangeText = this.container.querySelector("#viewRangeText");
-    if (viewRangeText) {
-      viewRangeText.textContent = `${this.viewRange} months`;
-    }
-    await this.loadInitialData();
+  updateViewControls() {
+    // Can update other controls here if needed in the future
+    // console.log("[Roster] Updating view controls - current range:", this.viewRange);
   }
 
   render() {
     console.log("[Roster] Rendering roster");
+    document.getElementById("cell-context-menu")?.remove();
+    document.getElementById("bulk-action-menu")?.remove();
     this.renderTimeline();
     this.renderRoster();
   }
 
   renderTimeline() {
     const timeline = this.container.querySelector("#timeline");
-    if (!timeline) {
-      console.error("[Roster] Timeline element not found");
-      return;
-    }
+    if (!timeline) return;
     timeline.innerHTML = "";
 
-    // Calculate date range
+    const startDate = new Date(this.viewStartDate);
+    startDate.setDate(1);
+    const endDate = new Date(startDate);
+    endDate.setMonth(endDate.getMonth() + this.viewRange);
+    endDate.setDate(0);
+
     const today = new Date();
-    const startDate = new Date(today.getFullYear(), today.getMonth(), 1);
-    const endDate = new Date(
-      today.getFullYear(),
-      today.getMonth() + this.viewRange,
-      0
+    today.setHours(0, 0, 0, 0);
+
+    console.log(
+      `[Roster] Rendering timeline from ${startDate.toISOString()} to ${endDate.toISOString()}`
     );
 
-    console.log("[Roster] Rendering timeline:", {
-      startDate: startDate.toISOString(),
-      endDate: endDate.toISOString(),
-      days: Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)),
-    });
+    let currentDate = new Date(startDate);
+    const dayElements = [];
 
-    // Create timeline cells
-    const days = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24));
-    timeline.style.display = "flex";
-    timeline.style.minWidth = `${days * 50}px`; // 50px per day
-
-    for (let i = 0; i < days; i++) {
-      const date = new Date(startDate);
-      date.setDate(date.getDate() + i);
+    while (currentDate <= endDate) {
+      const date = new Date(currentDate);
+      date.setHours(0, 0, 0, 0);
 
       const cell = document.createElement("div");
       cell.className = "timeline-cell";
       cell.style.width = "50px";
       cell.style.minWidth = "50px";
-      cell.style.height = "60px"; // Increased height to accommodate day name
-      cell.style.borderRight = "1px solid #eee";
+      cell.style.height = "60px";
+      cell.style.borderRight = "1px solid #ddd";
       cell.style.display = "flex";
       cell.style.flexDirection = "column";
       cell.style.alignItems = "center";
       cell.style.justifyContent = "center";
-      cell.style.gap = "2px"; // Add gap between elements
+      cell.style.gap = "2px";
 
-      // Show day name
       const dayName = date.toLocaleString("default", { weekday: "short" });
       const dayLabel = document.createElement("div");
       dayLabel.textContent = dayName;
@@ -271,14 +238,12 @@ export class Roster {
       dayLabel.style.color = "#666";
       cell.appendChild(dayLabel);
 
-      // Show date number
       const dateNum = document.createElement("div");
       dateNum.textContent = date.getDate();
       dateNum.style.fontSize = "0.9rem";
       cell.appendChild(dateNum);
 
-      // Show month on first day
-      if (date.getDate() === 1 || i === 0) {
+      if (date.getDate() === 1 || currentDate.getDate() === 1) {
         const monthName = date.toLocaleString("default", { month: "short" });
         const monthLabel = document.createElement("div");
         monthLabel.textContent = monthName;
@@ -287,46 +252,50 @@ export class Roster {
         cell.appendChild(monthLabel);
       }
 
-      // Highlight today
-      if (date.toDateString() === today.toDateString()) {
+      if (date.getTime() === today.getTime()) {
         cell.style.backgroundColor = "#f0f7ff";
         cell.style.fontWeight = "bold";
+        cell.classList.add("today");
       }
 
-      // Highlight weekends
       const dayOfWeek = date.getDay();
       if (dayOfWeek === 0 || dayOfWeek === 6) {
         cell.style.backgroundColor = "#f5f5f5";
+        cell.classList.add("weekend");
       }
 
       timeline.appendChild(cell);
+      currentDate.setDate(currentDate.getDate() + 1);
     }
+
+    timeline.append(...dayElements);
+    timeline.style.minWidth = `${dayElements.length * 50}px`;
   }
 
   renderRoster() {
     const roster = this.container.querySelector("#roster");
-    if (!roster) {
-      console.error("[Roster] Roster element not found");
-      return;
-    }
+    if (!roster) return;
     roster.innerHTML = "";
     roster.style.display = "flex";
     roster.style.flexDirection = "column";
 
-    // Calculate date range for columns
+    const startDate = new Date(this.viewStartDate);
+    startDate.setDate(1);
+    const endDate = new Date(startDate);
+    endDate.setMonth(endDate.getMonth() + this.viewRange);
+    endDate.setDate(0);
+
     const today = new Date();
-    const startDate = new Date(today.getFullYear(), today.getMonth(), 1);
-    const endDate = new Date(
-      today.getFullYear(),
-      today.getMonth() + this.viewRange,
-      0
-    );
-    const days = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24));
+    today.setHours(0, 0, 0, 0);
 
-    // For shift+click
-    let lastCellKey = null;
+    const dateMap = new Map();
+    let tempDate = new Date(startDate);
+    while (tempDate <= endDate) {
+      dateMap.set(tempDate.toISOString().split("T")[0], new Date(tempDate));
+      tempDate.setDate(tempDate.getDate() + 1);
+    }
+    const dateStringsInView = Array.from(dateMap.keys());
 
-    // Create worker rows
     this.workers.forEach((worker) => {
       const row = document.createElement("div");
       row.className = "worker-row";
@@ -335,7 +304,6 @@ export class Roster {
       row.style.borderBottom = "1px solid #eee";
       row.style.position = "relative";
 
-      // Add worker name
       const nameCell = document.createElement("div");
       nameCell.className = "worker-name";
       nameCell.textContent = worker;
@@ -352,7 +320,6 @@ export class Roster {
       nameCell.style.zIndex = "1";
       row.appendChild(nameCell);
 
-      // Add shift container (grid of days)
       const shiftContainer = document.createElement("div");
       shiftContainer.className = "shift-container";
       shiftContainer.style.position = "relative";
@@ -360,13 +327,10 @@ export class Roster {
       shiftContainer.style.minHeight = "60px";
       shiftContainer.style.display = "flex";
 
-      for (let i = 0; i < days; i++) {
-        const cellDate = new Date(startDate);
-        cellDate.setDate(cellDate.getDate() + i);
-        const cellDateStr = cellDate.toISOString().split("T")[0];
+      dateStringsInView.forEach((cellDateStr) => {
+        const cellDate = dateMap.get(cellDateStr);
         const cellKey = `${worker}|${cellDateStr}`;
 
-        // Find shift for this worker and date
         const shift = this.shifts.find(
           (s) => s.worker_name === worker && s.shift_date === cellDateStr
         );
@@ -383,23 +347,23 @@ export class Roster {
         cell.style.cursor = "pointer";
         cell.style.borderRight = "1px solid #eee";
         cell.style.background = "white";
+        cell.style.overflow = "hidden";
         cell.setAttribute("data-worker", worker);
         cell.setAttribute("data-date", cellDateStr);
         cell.setAttribute("data-key", cellKey);
 
-        // Highlight weekends
         const dayOfWeek = cellDate.getDay();
         if (dayOfWeek === 0 || dayOfWeek === 6) {
           cell.style.background = "#f5f5f5";
+          cell.classList.add("weekend");
         }
 
-        // Highlight today
-        if (cellDate.toDateString() === today.toDateString()) {
+        if (cellDate.getTime() === today.getTime()) {
           cell.style.background = "#f0f7ff";
           cell.style.fontWeight = "bold";
+          cell.classList.add("today");
         }
 
-        // Highlight if selected
         if (this.selectedCells.has(cellKey)) {
           cell.style.outline = "none";
           cell.style.background = "#e3f0ff";
@@ -407,54 +371,102 @@ export class Roster {
           cell.style.boxShadow = "0 0 0 2px #90caff";
         }
 
-        // Click handler for showing menu - this needs to come BEFORE selection handlers
-        cell.addEventListener("click", (e) => {
-          // If this is a normal click (no modifier keys and not during selection)
-          if (!e.shiftKey && !e.ctrlKey && !e.metaKey && !this.isSelecting) {
-            e.stopPropagation(); // Stop event from bubbling
-            e.preventDefault(); // Prevent default behavior
-            this.selectedCells.clear();
+        let isDragging = false;
+        let startX, startY, startTime;
+
+        cell.addEventListener("mousedown", (e) => {
+          if (e.button !== 0) return;
+
+          console.log(
+            `[Roster] mousedown on cell: ${cellKey}, isSelecting: ${this.isSelecting}`
+          );
+
+          if (e.ctrlKey || e.metaKey) {
+            console.log("[Roster] mousedown with Ctrl/Meta");
+            this.selectedCells.add(cellKey);
             this.render();
-            this.showCellMenu(worker, cellDateStr, shift, cell, e);
+            this.renderBulkActionMenu();
             return;
           }
-        });
-
-        // --- Drag-to-select logic ---
-        cell.addEventListener("mousedown", (e) => {
-          if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
+          if (e.shiftKey && this.selectionStart) {
+            console.log("[Roster] mousedown with Shift");
             e.preventDefault();
-            this.isSelecting = true;
-            this.selectionStart = cellKey;
-            this.selectedCells.clear();
-            this.selectedCells.add(cellKey);
-          }
-        });
-        cell.addEventListener("mouseenter", (e) => {
-          if (
-            this.isSelecting &&
-            (e.buttons === 1 || e.which === 1) &&
-            this.selectionStart
-          ) {
             this.selectRange(this.selectionStart, cellKey);
+            this.renderBulkActionMenu();
+            return;
           }
-        });
-        cell.addEventListener("mouseup", (e) => {
-          if (this.isSelecting) {
-            this.isSelecting = false;
-            this.render();
-          }
-        });
-        // --- End drag-to-select logic ---
 
-        cell.addEventListener("mouseup", () => {
-          this.isSelecting = false;
+          e.preventDefault();
+          isDragging = false;
+          startX = e.clientX;
+          startY = e.clientY;
+          startTime = Date.now();
+          this.isSelecting = true;
+          this.selectionStart = cellKey;
+
+          this.selectedCells.clear();
+          this.selectedCells.add(cellKey);
+          this.render();
+
+          console.log(
+            `[Roster] Tentatively selected: ${cellKey}, isSelecting: ${this.isSelecting}`
+          );
+
+          const tempMouseMove = (moveEvent) => {
+            if (
+              !isDragging &&
+              (Math.abs(moveEvent.clientX - startX) > 5 ||
+                Math.abs(moveEvent.clientY - startY) > 5)
+            ) {
+              console.log(`[Roster] Drag detected on cell: ${cellKey}`);
+              isDragging = true;
+            }
+            if (isDragging) {
+              const startWorker = this.selectionStart?.split("|")[0];
+              const currentCell = moveEvent.target.closest(".roster-grid-cell");
+              if (currentCell && startWorker) {
+                const currentKey = currentCell.dataset.key;
+                const currentWorker = currentCell.dataset.worker;
+                if (currentKey && currentWorker === startWorker) {
+                  this.selectRange(this.selectionStart, currentKey);
+                }
+              }
+            }
+          };
+
+          const tempMouseUp = (upEvent) => {
+            console.log(
+              `[Roster] tempMouseUp on cell: ${cellKey}, isDragging: ${isDragging}`
+            );
+            document.removeEventListener("mousemove", tempMouseMove);
+            document.removeEventListener("mouseup", tempMouseUp);
+
+            const timeElapsed = Date.now() - startTime;
+
+            if (!isDragging && timeElapsed < 300) {
+              console.log(
+                `[Roster] Treating interaction as CLICK on cell: ${cellKey}`
+              );
+              this.isSelecting = false;
+              this.handleCellClick(upEvent);
+            } else {
+              console.log(
+                `[Roster] Finalizing drag/long press on cell: ${cellKey}`
+              );
+              this.isSelecting = false;
+              if (this.selectedCells.size > 1) {
+                this.renderBulkActionMenu(upEvent);
+              }
+            }
+          };
+
+          document.addEventListener("mousemove", tempMouseMove);
+          document.addEventListener("mouseup", tempMouseUp);
         });
 
-        // Render shift block if present
         if (shift) {
           const shiftBlock = document.createElement("div");
-          shiftBlock.className = `shift ${shift.shift_type}`;
+          shiftBlock.className = `shift day`;
           shiftBlock.style.width = "40px";
           shiftBlock.style.height = "40px";
           shiftBlock.style.borderRadius = "4px";
@@ -464,13 +476,12 @@ export class Roster {
           shiftBlock.style.color = "white";
           shiftBlock.style.fontSize = "0.8rem";
           shiftBlock.style.boxShadow = "0 2px 4px rgba(0,0,0,0.1)";
-          shiftBlock.style.pointerEvents = "none"; // Let clicks go through to cell
+          shiftBlock.style.pointerEvents = "none";
 
           if (shift.is_working) {
-            shiftBlock.style.backgroundColor =
-              shift.shift_type === "day" ? "#4CAF50" : "#2196F3";
+            shiftBlock.style.backgroundColor = "#4CAF50";
             shiftBlock.style.opacity = "1";
-            shiftBlock.textContent = shift.shift_type === "day" ? "D" : "N";
+            shiftBlock.textContent = "D";
           } else {
             shiftBlock.style.backgroundColor = "#ff9800";
             shiftBlock.style.opacity = "0.9";
@@ -488,45 +499,49 @@ export class Roster {
         }
 
         shiftContainer.appendChild(cell);
-      }
+      });
+
+      // Create and Position the single Load More Button
+      this.createOrUpdateLoadMoreButton();
+
       row.appendChild(shiftContainer);
       roster.appendChild(row);
     });
 
-    // Bulk action menu
-    if (this.selectedCells.size > 0) {
-      this.renderBulkActionMenu();
-    }
-
-    // Clear selection on click outside
-    const clearSelectionHandler = (e) => {
-      const isClickOnCell = e.target.closest(".roster-grid-cell");
-      const isClickOnMenu =
-        e.target.closest("#cell-menu") || e.target.closest("#bulk-action-menu");
-
-      if (!isClickOnCell && !isClickOnMenu) {
-        this.selectedCells.clear();
-        this.render();
-        document.removeEventListener("mousedown", clearSelectionHandler);
+    const mouseUpHandler = (e) => {
+      if (this.isSelecting) {
+        console.log(
+          "[Roster] Document mouseup detected, setting isSelecting=false"
+        );
+        this.isSelecting = false;
+        if (this.selectedCells.size > 1) {
+          this.renderBulkActionMenu(e);
+        }
       }
+      document.removeEventListener("mouseup", mouseUpHandler);
     };
-    document.addEventListener("mousedown", clearSelectionHandler);
+    document.addEventListener("mouseup", mouseUpHandler);
   }
 
   selectRange(startKey, endKey) {
-    // Select all cells between startKey and endKey (row-major order)
+    console.log(`[Roster] selectRange called: ${startKey} to ${endKey}`);
     const allKeys = [];
+    // Regenerate keys based on the *currently rendered* range
+    const startDate = new Date(this.viewStartDate);
+    const endDate = new Date(startDate);
+    endDate.setMonth(endDate.getMonth() + this.viewRange);
+    endDate.setDate(0);
+
     this.workers.forEach((worker) => {
-      const today = new Date();
-      const startDate = new Date(today.getFullYear(), today.getMonth(), 1);
-      for (let i = 0; i < this.viewRange * 31; i++) {
-        const cellDate = new Date(startDate);
-        cellDate.setDate(cellDate.getDate() + i);
-        const cellDateStr = cellDate.toISOString().split("T")[0];
+      let currentDate = new Date(startDate);
+      while (currentDate <= endDate) {
+        const cellDateStr = currentDate.toISOString().split("T")[0];
         const cellKey = `${worker}|${cellDateStr}`;
         allKeys.push(cellKey);
+        currentDate.setDate(currentDate.getDate() + 1);
       }
     });
+
     const startIdx = allKeys.indexOf(startKey);
     const endIdx = allKeys.indexOf(endKey);
     if (startIdx !== -1 && endIdx !== -1) {
@@ -534,17 +549,31 @@ export class Roster {
         Math.min(startIdx, endIdx),
         Math.max(startIdx, endIdx),
       ];
-      this.selectedCells = new Set(allKeys.slice(from, to + 1));
-      this.render();
+      const keysInRange = allKeys.slice(from, to + 1);
+      if (
+        this.selectedCells.size !== keysInRange.length ||
+        !keysInRange.every((key) => this.selectedCells.has(key))
+      ) {
+        this.selectedCells = new Set(keysInRange);
+        console.log(
+          `[Roster] selectRange updated selection size: ${this.selectedCells.size}`
+        );
+        this.render();
+      }
+    } else {
+      console.warn(
+        `[Roster] selectRange indices not found: start=${startIdx}, end=${endIdx}`
+      );
     }
   }
 
-  renderBulkActionMenu() {
-    // Remove any existing menu
+  renderBulkActionMenu(finalEvent) {
+    console.log(
+      `[Roster] renderBulkActionMenu executing, selected count: ${this.selectedCells.size}`
+    );
     let menu = document.getElementById("bulk-action-menu");
     if (menu) menu.remove();
     if (this.selectedCells.size < 2) return;
-    // Gather info about selected cells
     const selected = Array.from(this.selectedCells).map((key) => {
       const [worker, date] = key.split("|");
       const shift = this.shifts.find(
@@ -565,497 +594,433 @@ export class Roster {
 
     menu = document.createElement("div");
     menu.id = "bulk-action-menu";
-    menu.style.position = "fixed";
-    menu.style.bottom = "30px";
-    menu.style.left = "50%";
-    menu.style.transform = "translateX(-50%)";
-    menu.style.background = "white";
-    menu.style.border = "1px solid #b3d1f7";
-    menu.style.borderRadius = "10px";
-    menu.style.boxShadow = "0 4px 16px rgba(0,0,0,0.10)";
-    menu.style.padding = "10px 18px";
+    menu.className = "bulk-action-menu";
+    menu.style.position = "absolute";
+    menu.style.opacity = "0";
+    menu.style.flexDirection = "column";
+    menu.style.minWidth = "180px";
+    menu.style.background = "rgba(40, 42, 54, 0.95)";
+    menu.style.color = "#f8f8f2";
+    menu.style.border = "1px solid rgba(255, 255, 255, 0.1)";
+    menu.style.borderRadius = "8px";
+    menu.style.boxShadow = "0 5px 25px rgba(0, 0, 0, 0.4)";
+    menu.style.padding = "8px 15px";
     menu.style.zIndex = "9999";
     menu.style.display = "flex";
-    menu.style.gap = "12px";
-    menu.style.alignItems = "center";
+    menu.style.gap = "8px";
+    menu.style.alignItems = "stretch";
     menu.style.fontSize = "1.05em";
 
-    // Counter
     const counter = document.createElement("span");
+    counter.className = "bulk-menu-counter";
     counter.textContent = `${this.selectedCells.size} selected`;
     counter.style.fontWeight = "bold";
-    counter.style.color = "#1976d2";
+    counter.style.color = "#bd93f9";
+    counter.style.textAlign = "center";
+    counter.style.paddingBottom = "8px";
+    counter.style.borderBottom = "1px solid rgba(255, 255, 255, 0.1)";
     menu.appendChild(counter);
 
     if (hasEmpty || hasShift) {
       const addDayBtn = document.createElement("button");
+      addDayBtn.className = "bulk-menu-button button-work";
       addDayBtn.textContent = "Set All to Day";
-      addDayBtn.style.background = "#4CAF50";
-      addDayBtn.style.color = "white";
-      addDayBtn.style.border = "none";
-      addDayBtn.style.borderRadius = "5px";
-      addDayBtn.style.padding = "6px 14px";
-      addDayBtn.style.cursor = "pointer";
       addDayBtn.addEventListener("click", async () => {
-        for (const c of selected) {
-          if (!c.shift) {
-            await rosterApi.addShift({
-              worker_name: c.worker,
-              shift_type: "day",
-              shift_date: c.date,
-              is_working: true,
-              notes: "",
-            });
-          } else {
-            await rosterApi.updateShift(c.shift.id, {
-              shift_type: "day",
-              is_working: true,
-            });
-          }
-        }
-        this.selectedCells.clear();
-        this.loadInitialData();
-      });
-      menu.appendChild(addDayBtn);
-      if (this.shiftMode === "day-night") {
-        const addNightBtn = document.createElement("button");
-        addNightBtn.textContent = "Set All to Night";
-        addNightBtn.style.background = "#2196F3";
-        addNightBtn.style.color = "white";
-        addNightBtn.style.border = "none";
-        addNightBtn.style.borderRadius = "5px";
-        addNightBtn.style.padding = "6px 14px";
-        addNightBtn.style.cursor = "pointer";
-        addNightBtn.addEventListener("click", async () => {
+        menu.remove();
+        this.container.classList.add("loading");
+        try {
           for (const c of selected) {
             if (!c.shift) {
-              await rosterApi.addShift({
+              const newShift = await rosterApi.addShift({
                 worker_name: c.worker,
-                shift_type: "night",
+                shift_type: "day",
                 shift_date: c.date,
                 is_working: true,
                 notes: "",
               });
+              if (newShift) this.allShifts.push(newShift);
             } else {
               await rosterApi.updateShift(c.shift.id, {
-                shift_type: "night",
+                shift_type: "day",
                 is_working: true,
               });
+              const index = this.allShifts.findIndex(
+                (s) => s.id === c.shift.id
+              );
+              if (index !== -1) {
+                this.allShifts[index].shift_type = "day";
+                this.allShifts[index].is_working = true;
+              }
             }
           }
+        } catch (error) {
+          console.error("Error bulk setting to Day:", error);
+          this.showError("Failed to update all shifts.");
+        } finally {
           this.selectedCells.clear();
-          this.loadInitialData();
-        });
-        menu.appendChild(addNightBtn);
-      }
+          this.container.classList.remove("loading");
+          this.filterAndRender();
+        }
+      });
+      menu.appendChild(addDayBtn);
     }
     if (hasShift) {
       const setRdoBtn = document.createElement("button");
+      setRdoBtn.className = "bulk-menu-button button-rdo";
       setRdoBtn.textContent = "Set to RDO";
-      setRdoBtn.style.background = "#ff9800";
-      setRdoBtn.style.color = "white";
-      setRdoBtn.style.border = "none";
-      setRdoBtn.style.borderRadius = "5px";
-      setRdoBtn.style.padding = "6px 14px";
-      setRdoBtn.style.cursor = "pointer";
       setRdoBtn.addEventListener("click", async () => {
-        for (const c of selected) {
-          if (!c.shift) {
-            await rosterApi.addShift({
-              worker_name: c.worker,
-              shift_type: "day",
-              shift_date: c.date,
-              is_working: false,
-              notes: "",
-            });
-          } else {
-            await rosterApi.updateShift(c.shift.id, { is_working: false });
+        menu.remove();
+        this.container.classList.add("loading");
+        try {
+          for (const c of selected) {
+            if (!c.shift) {
+              const newShift = await rosterApi.addShift({
+                worker_name: c.worker,
+                shift_type: "day",
+                shift_date: c.date,
+                is_working: false,
+                notes: "",
+              });
+              if (newShift) this.allShifts.push(newShift);
+            } else {
+              await rosterApi.updateShift(c.shift.id, { is_working: false });
+              const index = this.allShifts.findIndex(
+                (s) => s.id === c.shift.id
+              );
+              if (index !== -1) this.allShifts[index].is_working = false;
+            }
           }
+        } catch (error) {
+          console.error("Error bulk setting RDO:", error);
+          this.showError("Failed to update all shifts.");
+        } finally {
+          this.selectedCells.clear();
+          this.container.classList.remove("loading");
+          this.filterAndRender();
         }
-        this.selectedCells.clear();
-        this.loadInitialData();
       });
       menu.appendChild(setRdoBtn);
 
       const setWorkingBtn = document.createElement("button");
+      setWorkingBtn.className = "bulk-menu-button button-work";
       setWorkingBtn.textContent = "Set to Working";
-      setWorkingBtn.style.background = "#4CAF50";
-      setWorkingBtn.style.color = "white";
-      setWorkingBtn.style.border = "none";
-      setWorkingBtn.style.borderRadius = "5px";
-      setWorkingBtn.style.padding = "6px 14px";
-      setWorkingBtn.style.cursor = "pointer";
       setWorkingBtn.addEventListener("click", async () => {
-        for (const c of selected) {
-          if (!c.shift) {
-            await rosterApi.addShift({
-              worker_name: c.worker,
-              shift_type: "day",
-              shift_date: c.date,
-              is_working: true,
-              notes: "",
-            });
-          } else {
-            await rosterApi.updateShift(c.shift.id, { is_working: true });
+        menu.remove();
+        this.container.classList.add("loading");
+        try {
+          for (const c of selected) {
+            if (!c.shift) {
+              const newShift = await rosterApi.addShift({
+                worker_name: c.worker,
+                shift_type: "day",
+                shift_date: c.date,
+                is_working: true,
+                notes: "",
+              });
+              if (newShift) this.allShifts.push(newShift);
+            } else {
+              await rosterApi.updateShift(c.shift.id, { is_working: true });
+              const index = this.allShifts.findIndex(
+                (s) => s.id === c.shift.id
+              );
+              if (index !== -1) this.allShifts[index].is_working = true;
+            }
           }
+        } catch (error) {
+          console.error("Error bulk setting Working:", error);
+          this.showError("Failed to update all shifts.");
+        } finally {
+          this.selectedCells.clear();
+          this.container.classList.remove("loading");
+          this.filterAndRender();
         }
-        this.selectedCells.clear();
-        this.loadInitialData();
       });
       menu.appendChild(setWorkingBtn);
 
       const removeBtn = document.createElement("button");
+      removeBtn.className = "bulk-menu-button button-remove";
       removeBtn.textContent = "Remove Shift(s)";
-      removeBtn.style.background = "#e74c3c";
-      removeBtn.style.color = "white";
-      removeBtn.style.border = "none";
-      removeBtn.style.borderRadius = "5px";
-      removeBtn.style.padding = "6px 14px";
-      removeBtn.style.cursor = "pointer";
       removeBtn.addEventListener("click", async () => {
-        for (const c of selected.filter((c) => c.shift)) {
-          await rosterApi.deleteShift(c.shift.id);
+        menu.remove();
+        this.container.classList.add("loading");
+        const idsToRemove = selected
+          .filter((c) => c.shift)
+          .map((c) => c.shift.id);
+        console.log("[Roster Bulk Delete] Shifts to remove IDs:", idsToRemove);
+        try {
+          for (const idToRemove of idsToRemove) {
+            await rosterApi.deleteShift(idToRemove);
+          }
+          console.log(
+            "[Roster Bulk Delete] allShifts before filter:",
+            this.allShifts.length,
+            JSON.parse(JSON.stringify(this.allShifts.map((s) => s.id)))
+          );
+          this.allShifts = this.allShifts.filter(
+            (s) => !idsToRemove.includes(s.id)
+          );
+          console.log(
+            "[Roster Bulk Delete] allShifts after filter:",
+            this.allShifts.length,
+            JSON.parse(JSON.stringify(this.allShifts.map((s) => s.id)))
+          );
+        } catch (error) {
+          console.error("Error bulk removing shifts:", error);
+          this.showError("Failed to remove all shifts.");
+        } finally {
+          this.selectedCells.clear();
+          this.container.classList.remove("loading");
+          this.filterAndRender();
         }
-        this.selectedCells.clear();
-        this.loadInitialData();
       });
       menu.appendChild(removeBtn);
     }
     document.body.appendChild(menu);
+    console.log("[Roster] Appended bulk action menu.");
+
+    if (finalEvent) {
+      this.positionMenu(menu, finalEvent);
+    } else {
+      menu.style.position = "fixed";
+      menu.style.bottom = "20px";
+      menu.style.left = "50%";
+      menu.style.transform = "translateX(-50%)";
+      menu.style.opacity = "1";
+      console.warn(
+        "[Roster] Bulk menu rendered without finalEvent for positioning."
+      );
+    }
+
+    const closeHandler = (e) => {
+      if (!menu.contains(e.target)) {
+        menu.remove();
+        document.removeEventListener("mousedown", closeHandler, true);
+      }
+    };
+    setTimeout(() => {
+      document.addEventListener("mousedown", closeHandler, true);
+    }, 0);
   }
 
   showCellMenu(worker, date, shift, cell, clickEvent) {
-    console.log("[Roster] Creating cell menu for:", { worker, date, shift });
+    console.log("[Roster] showCellMenu called for:", { worker, date, shift });
+    document.getElementById("cell-context-menu")?.remove();
 
-    // Remove any existing menus
-    const oldMenu = document.getElementById("cell-menu");
-    const oldBulkMenu = document.getElementById("bulk-action-menu");
-    if (oldMenu) oldMenu.remove();
-    if (oldBulkMenu) oldBulkMenu.remove();
-
-    // Create menu
     const menu = document.createElement("div");
-    menu.id = "cell-menu";
-    menu.style.position = "fixed";
-    menu.style.background = "white";
-    menu.style.border = "1px solid #ccc";
-    menu.style.borderRadius = "8px";
-    menu.style.boxShadow = "0 8px 24px rgba(0,0,0,0.2)";
-    menu.style.padding = "12px 16px";
-    menu.style.zIndex = "99999";
-    menu.style.display = "flex";
-    menu.style.flexDirection = "column";
-    menu.style.gap = "10px";
-    menu.style.minWidth = "220px";
-    menu.style.maxWidth = "300px";
-    menu.style.transformOrigin = "top left";
-    menu.style.transition = "opacity 0.1s ease";
-    menu.style.opacity = "0";
+    menu.id = "cell-context-menu";
+    menu.className = "cell-context-menu";
 
-    // Add date display at the top
-    const dateDisplay = document.createElement("div");
-    dateDisplay.style.borderBottom = "1px solid #eee";
-    dateDisplay.style.paddingBottom = "8px";
-    dateDisplay.style.marginBottom = "8px";
-    dateDisplay.style.fontWeight = "bold";
-    const displayDate = new Date(date);
-    dateDisplay.textContent = displayDate.toLocaleDateString("en-US", {
-      weekday: "long",
-      year: "numeric",
-      month: "long",
-      day: "numeric",
+    const header = document.createElement("div");
+    header.className = "context-menu-header";
+    // Parse YYYY-MM-DD manually and create Date using UTC to avoid timezone issues
+    const [year, month, day] = date.split("-").map(Number);
+    // Use UTC date object to get weekday reliably, then format manually
+    const displayDateUTC = new Date(Date.UTC(year, month - 1, day));
+    const weekday = displayDateUTC.toLocaleDateString("en-US", {
+      weekday: "short",
+      timeZone: "UTC",
     });
-    menu.appendChild(dateDisplay);
+    const monthName = displayDateUTC.toLocaleDateString("en-US", {
+      month: "short",
+      timeZone: "UTC",
+    });
+    header.textContent = `${weekday}, ${monthName} ${day}, ${year}`;
+    menu.appendChild(header);
 
-    // Add menu content based on whether there's a shift or not
+    const actions = document.createElement("div");
+    actions.className = "context-menu-section context-menu-actions";
+
     if (shift) {
-      // Show shift info and edit options
-      if (this.shiftMode === "day-night") {
-        const typeRow = document.createElement("div");
-        typeRow.style.display = "flex";
-        typeRow.style.justifyContent = "space-between";
-        typeRow.style.alignItems = "center";
-        typeRow.innerHTML = `<span>Type:</span>`;
-        const typeSelect = document.createElement("select");
-        typeSelect.style.padding = "4px 8px";
-        typeSelect.style.borderRadius = "3px";
-        typeSelect.style.border = "1px solid #ddd";
-        typeSelect.innerHTML = `<option value="day">Day</option><option value="night">Night</option>`;
-        typeSelect.value = shift.shift_type;
-        typeSelect.addEventListener("change", async () => {
+      const toggleWorkBtn = document.createElement("button");
+      toggleWorkBtn.textContent = shift.is_working
+        ? "Set to RDO"
+        : "Set to Working";
+      toggleWorkBtn.className = shift.is_working
+        ? "context-menu-button button-rdo"
+        : "context-menu-button button-work";
+      toggleWorkBtn.onclick = async () => {
+        try {
+          const newWorkingStatus = !shift.is_working;
           await rosterApi.updateShift(shift.id, {
-            shift_type: typeSelect.value,
+            is_working: newWorkingStatus,
           });
           menu.remove();
-          this.loadInitialData();
-        });
-        typeRow.appendChild(typeSelect);
-        menu.appendChild(typeRow);
-      }
+          const index = this.allShifts.findIndex((s) => s.id === shift.id);
+          if (index !== -1) {
+            this.allShifts[index].is_working = newWorkingStatus;
+          }
+          this.filterAndRender();
+        } catch (err) {
+          console.error("Error toggling work status:", err);
+          this.showError("Failed to update shift.");
+        }
+      };
+      actions.appendChild(toggleWorkBtn);
 
-      // Working toggle
-      const workRow = document.createElement("div");
-      workRow.style.display = "flex";
-      workRow.style.justifyContent = "space-between";
-      workRow.style.alignItems = "center";
-      workRow.style.marginBottom = "8px";
-      workRow.innerHTML = `<span>Status:</span>`;
-      const workToggle = document.createElement("button");
-      workToggle.textContent = shift.is_working ? "Working" : "RDO";
-      workToggle.style.background = shift.is_working ? "#4CAF50" : "#ff9800";
-      workToggle.style.color = "white";
-      workToggle.style.border = "none";
-      workToggle.style.borderRadius = "3px";
-      workToggle.style.padding = "6px 16px";
-      workToggle.style.fontWeight = "bold";
-      workToggle.style.cursor = "pointer";
-      workToggle.addEventListener("click", async () => {
-        await rosterApi.updateShift(shift.id, {
-          is_working: !shift.is_working,
-        });
-        menu.remove();
-        this.loadInitialData();
-      });
-      workRow.appendChild(workToggle);
-      menu.appendChild(workRow);
+      const removeBtn = document.createElement("button");
+      removeBtn.textContent = "Remove Shift";
+      removeBtn.className = "context-menu-button button-remove";
+      removeBtn.onclick = async () => {
+        if (confirm("Are you sure you want to remove this shift?")) {
+          try {
+            const idToRemove = shift.id;
+            console.log(
+              `[Roster Single Delete] Removing shift ID: ${idToRemove}`
+            );
+            await rosterApi.deleteShift(idToRemove);
+            menu.remove();
+            console.log(
+              "[Roster Single Delete] allShifts before filter:",
+              this.allShifts.length,
+              JSON.parse(JSON.stringify(this.allShifts.map((s) => s.id)))
+            );
+            this.allShifts = this.allShifts.filter((s) => s.id !== idToRemove);
+            console.log(
+              "[Roster Single Delete] allShifts after filter:",
+              this.allShifts.length,
+              JSON.parse(JSON.stringify(this.allShifts.map((s) => s.id)))
+            );
+            this.filterAndRender();
+          } catch (err) {
+            console.error("Error removing shift:", err);
+            this.showError("Failed to remove shift.");
+          }
+        }
+      };
+      actions.appendChild(removeBtn);
+    } else {
+      const addShiftBtn = document.createElement("button");
+      addShiftBtn.textContent = "Add Shift";
+      addShiftBtn.className = "context-menu-button button-work";
+      addShiftBtn.onclick = async () => {
+        try {
+          const newShift = await rosterApi.addShift({
+            worker_name: worker,
+            shift_date: date,
+            shift_type: "day",
+            is_working: true,
+            notes: "",
+          });
+          menu.remove();
+          if (newShift) {
+            this.allShifts.push(newShift);
+            this.filterAndRender();
+          } else {
+            this.loadInitialData(true);
+          }
+        } catch (err) {
+          console.error("Error adding shift:", err);
+          this.showError("Failed to add shift.");
+        }
+      };
+      actions.appendChild(addShiftBtn);
 
-      // Notes section
+      const addRdoBtn = document.createElement("button");
+      addRdoBtn.textContent = "Add RDO";
+      addRdoBtn.className = "context-menu-button button-rdo";
+      addRdoBtn.onclick = async () => {
+        try {
+          const newShift = await rosterApi.addShift({
+            worker_name: worker,
+            shift_date: date,
+            shift_type: "day",
+            is_working: false,
+            notes: "",
+          });
+          menu.remove();
+          if (newShift) {
+            this.allShifts.push(newShift);
+            this.filterAndRender();
+          } else {
+            this.loadInitialData(true);
+          }
+        } catch (err) {
+          console.error("Error adding RDO:", err);
+          this.showError("Failed to add RDO.");
+        }
+      };
+      actions.appendChild(addRdoBtn);
+    }
+    menu.appendChild(actions);
+
+    if (shift) {
       const notesSection = document.createElement("div");
-      notesSection.style.marginTop = "10px";
+      notesSection.className = "context-menu-section context-menu-notes";
 
       const notesLabel = document.createElement("label");
       notesLabel.textContent = "Notes:";
-      notesLabel.style.display = "block";
-      notesLabel.style.marginBottom = "4px";
+      notesLabel.htmlFor = `notes-input-${shift.id}`;
 
       const notesInput = document.createElement("textarea");
+      notesInput.id = `notes-input-${shift.id}`;
       notesInput.value = shift.notes || "";
-      notesInput.style.width = "100%";
-      notesInput.style.minHeight = "60px";
-      notesInput.style.padding = "8px";
-      notesInput.style.borderRadius = "4px";
-      notesInput.style.border = "1px solid #ddd";
-      notesInput.style.resize = "vertical";
-      notesInput.style.marginBottom = "8px";
-      notesInput.placeholder = "Add notes about this shift...";
+      notesInput.placeholder = "Add notes...";
+      notesInput.rows = 3;
 
-      const saveBtn = document.createElement("button");
-      saveBtn.textContent = "Save Notes";
-      saveBtn.style.background = "#007bff";
-      saveBtn.style.color = "white";
-      saveBtn.style.border = "none";
-      saveBtn.style.borderRadius = "3px";
-      saveBtn.style.padding = "6px 12px";
-      saveBtn.style.cursor = "pointer";
-      saveBtn.style.width = "100%";
-
-      saveBtn.addEventListener("click", async () => {
-        await rosterApi.updateShift(shift.id, { notes: notesInput.value });
-        menu.remove();
-        this.loadInitialData();
-      });
+      const saveNotesBtn = document.createElement("button");
+      saveNotesBtn.textContent = "Save Notes";
+      saveNotesBtn.className = "context-menu-button button-save";
+      saveNotesBtn.onclick = async () => {
+        try {
+          const newNotes = notesInput.value;
+          await rosterApi.updateShift(shift.id, { notes: newNotes });
+          menu.remove();
+          const index = this.allShifts.findIndex((s) => s.id === shift.id);
+          if (index !== -1) {
+            this.allShifts[index].notes = newNotes;
+          }
+        } catch (err) {
+          console.error("Error saving notes:", err);
+          this.showError("Failed to save notes.");
+        }
+      };
 
       notesSection.appendChild(notesLabel);
       notesSection.appendChild(notesInput);
-      notesSection.appendChild(saveBtn);
+      notesSection.appendChild(saveNotesBtn);
       menu.appendChild(notesSection);
-
-      // Remove button
-      const removeBtn = document.createElement("button");
-      removeBtn.textContent = "Remove Shift";
-      removeBtn.style.background = "#dc3545";
-      removeBtn.style.color = "white";
-      removeBtn.style.border = "none";
-      removeBtn.style.borderRadius = "3px";
-      removeBtn.style.padding = "6px 12px";
-      removeBtn.style.cursor = "pointer";
-      removeBtn.style.width = "100%";
-      removeBtn.style.marginTop = "8px";
-
-      removeBtn.addEventListener("click", async () => {
-        if (confirm("Are you sure you want to remove this shift?")) {
-          await rosterApi.deleteShift(shift.id);
-          menu.remove();
-          this.loadInitialData();
-        }
-      });
-      menu.appendChild(removeBtn);
-    } else {
-      // Add new shift options
-      const addShiftSection = document.createElement("div");
-      addShiftSection.style.display = "flex";
-      addShiftSection.style.flexDirection = "column";
-      addShiftSection.style.gap = "8px";
-
-      if (this.shiftMode === "day-night") {
-        const addDayBtn = document.createElement("button");
-        addDayBtn.textContent = "Add Day Shift";
-        addDayBtn.style.background = "#4CAF50";
-        addDayBtn.style.color = "white";
-        addDayBtn.style.border = "none";
-        addDayBtn.style.borderRadius = "3px";
-        addDayBtn.style.padding = "8px 16px";
-        addDayBtn.style.cursor = "pointer";
-        addDayBtn.addEventListener("click", async () => {
-          await rosterApi.addShift({
-            worker_name: worker,
-            shift_type: "day",
-            shift_date: date,
-            is_working: true,
-            notes: "",
-          });
-          menu.remove();
-          this.loadInitialData();
-        });
-
-        const addNightBtn = document.createElement("button");
-        addNightBtn.textContent = "Add Night Shift";
-        addNightBtn.style.background = "#2196F3";
-        addNightBtn.style.color = "white";
-        addNightBtn.style.border = "none";
-        addNightBtn.style.borderRadius = "3px";
-        addNightBtn.style.padding = "8px 16px";
-        addNightBtn.style.cursor = "pointer";
-        addNightBtn.addEventListener("click", async () => {
-          await rosterApi.addShift({
-            worker_name: worker,
-            shift_type: "night",
-            shift_date: date,
-            is_working: true,
-            notes: "",
-          });
-          menu.remove();
-          this.loadInitialData();
-        });
-
-        addShiftSection.appendChild(addDayBtn);
-        addShiftSection.appendChild(addNightBtn);
-      } else {
-        const addShiftBtn = document.createElement("button");
-        addShiftBtn.textContent = "Add Shift";
-        addShiftBtn.style.background = "#4CAF50";
-        addShiftBtn.style.color = "white";
-        addShiftBtn.style.border = "none";
-        addShiftBtn.style.borderRadius = "3px";
-        addShiftBtn.style.padding = "8px 16px";
-        addShiftBtn.style.cursor = "pointer";
-        addShiftBtn.addEventListener("click", async () => {
-          await rosterApi.addShift({
-            worker_name: worker,
-            shift_type: "day",
-            shift_date: date,
-            is_working: true,
-            notes: "",
-          });
-          menu.remove();
-          this.loadInitialData();
-        });
-        addShiftSection.appendChild(addShiftBtn);
-      }
-
-      const addRDOBtn = document.createElement("button");
-      addRDOBtn.textContent = "Add RDO";
-      addRDOBtn.style.background = "#ff9800";
-      addRDOBtn.style.color = "white";
-      addRDOBtn.style.border = "none";
-      addRDOBtn.style.borderRadius = "3px";
-      addRDOBtn.style.padding = "8px 16px";
-      addRDOBtn.style.cursor = "pointer";
-      addRDOBtn.addEventListener("click", async () => {
-        await rosterApi.addShift({
-          worker_name: worker,
-          shift_type: "day",
-          shift_date: date,
-          is_working: false,
-          notes: "",
-        });
-        menu.remove();
-        this.loadInitialData();
-      });
-
-      addShiftSection.appendChild(addRDOBtn);
-      menu.appendChild(addShiftSection);
     }
 
-    // Add the menu to the document body
     document.body.appendChild(menu);
+    console.log("[Roster] Appended context menu to body.");
+    this.positionMenu(menu, clickEvent);
 
-    // Position menu near the mouse click
-    const menuRect = menu.getBoundingClientRect();
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
-
-    // Get click coordinates
-    const mouseX = clickEvent ? clickEvent.clientX : 0;
-    const mouseY = clickEvent ? clickEvent.clientY : 0;
-
-    // Start by positioning to the right of the mouse
-    let left = mouseX + 10;
-    let top = mouseY - 15;
-
-    // If it would go off right edge of viewport, position to the left
-    if (left + menuRect.width > viewportWidth - 20) {
-      left = mouseX - menuRect.width - 10;
-    }
-
-    // If it would go off bottom of viewport, position above
-    if (top + menuRect.height > viewportHeight - 20) {
-      top = mouseY - menuRect.height - 10;
-    }
-
-    // Ensure menu stays within viewport bounds
-    left = Math.max(20, Math.min(left, viewportWidth - menuRect.width - 20));
-    top = Math.max(20, Math.min(top, viewportHeight - menuRect.height - 20));
-
-    // Apply position
-    menu.style.left = `${Math.round(left)}px`;
-    menu.style.top = `${Math.round(top)}px`;
-    console.log("[Roster] Menu positioned at:", { left, top, mouseX, mouseY });
-
-    // Show the menu with a fade-in effect
-    setTimeout(() => {
-      menu.style.opacity = "1";
-    }, 10);
-
-    // Add semi-transparent overlay
-    const overlay = document.createElement("div");
-    overlay.style.position = "fixed";
-    overlay.style.top = "0";
-    overlay.style.left = "0";
-    overlay.style.right = "0";
-    overlay.style.bottom = "0";
-    overlay.style.background = "rgba(0,0,0,0.2)";
-    overlay.style.zIndex = "99998";
-    document.body.appendChild(overlay);
-
-    // Close menu on click outside
-    const closeMenu = (e) => {
-      const isClickOnMenu = menu.contains(e.target);
-      const isClickOnCell = cell.contains(e.target);
-
-      if (!isClickOnMenu && !isClickOnCell) {
-        menu.style.opacity = "0";
-        setTimeout(() => {
-          menu.remove();
-          overlay.remove();
-        }, 100);
-        document.removeEventListener("mousedown", closeMenu);
+    const closeHandler = (e) => {
+      if (!menu.contains(e.target)) {
+        menu.remove();
+        document.removeEventListener("mousedown", closeHandler, true);
       }
     };
+    setTimeout(() => {
+      document.addEventListener("mousedown", closeHandler, true);
+    }, 0);
+  }
 
-    document.addEventListener("mousedown", closeMenu);
+  positionMenu(menu, clickEvent) {
+    menu.style.position = "absolute";
+    menu.style.left = `${clickEvent.clientX + 5}px`;
+    menu.style.top = `${clickEvent.clientY + 5}px`;
+    menu.style.opacity = "0";
 
-    // Add hover effects to buttons
-    menu.querySelectorAll("button").forEach((button) => {
-      button.style.transition = "all 0.2s ease";
-      button.addEventListener("mouseover", () => {
-        button.style.filter = "brightness(0.9)";
-        button.style.transform = "scale(1.02)";
-      });
-      button.addEventListener("mouseout", () => {
-        button.style.filter = "brightness(1)";
-        button.style.transform = "scale(1)";
-      });
+    requestAnimationFrame(() => {
+      const menuRect = menu.getBoundingClientRect();
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      let left = clickEvent.clientX + 5;
+      let top = clickEvent.clientY + 5;
+
+      if (left + menuRect.width > viewportWidth - 10) {
+        left = clickEvent.clientX - menuRect.width - 5;
+      }
+      if (top + menuRect.height > viewportHeight - 10) {
+        top = clickEvent.clientY - menuRect.height - 5;
+      }
+      left = Math.max(10, left);
+      top = Math.max(10, top);
+
+      menu.style.left = `${left}px`;
+      menu.style.top = `${top}px`;
+      menu.style.opacity = "1";
     });
   }
 
@@ -1080,285 +1045,816 @@ export class Roster {
 
   addStyles() {
     const styleId = "roster-styles";
-    if (!document.getElementById(styleId)) {
-      const style = document.createElement("style");
-      style.id = styleId;
-      style.textContent = `
-        .roster-container {
-          display: flex;
-          flex-direction: column;
-          height: 100%;
-          background: white;
-          border-radius: 8px;
-          box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
+    if (document.getElementById(styleId)) return;
 
-        .roster-header {
-          padding: 20px;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          border-bottom: 1px solid #eee;
-        }
+    const style = document.createElement("style");
+    style.id = styleId;
+    style.textContent = `
+      .roster-root-container {
+        display: flex;
+        flex-direction: column;
+        height: calc(100vh - 100px);
+        overflow: hidden;
+        position: relative;
+      }
 
-        .roster-controls {
-          display: flex;
-          gap: 10px;
-          align-items: center;
-        }
+      .roster-container {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        background: var(--bg-dark);
+        border: 1px solid var(--border-dark);
+        border-radius: var(--border-radius);
+        color: #f8f8f2;
+      }
 
-        .gantt-scroll-container {
-          flex: 1;
-          overflow: auto;
-          position: relative;
-          border: 1px solid #ddd;
-          margin: 20px;
-          border-radius: 4px;
-        }
+      .roster-header {
+        padding: 15px 20px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 1px solid var(--border-dark);
+        background: rgba(40, 42, 54, 0.8);
+      }
+      .roster-header h2 {
+        margin: 0;
+        font-size: 1.2rem;
+        color: #f8f8f2;
+      }
 
-        .gantt-content {
-          display: flex;
-          flex-direction: column;
-          min-width: fit-content;
-        }
+      .roster-controls {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .roster-controls span {
+        color: #f8f8f2;
+        font-size: 0.9rem;
+        margin: 0 5px;
+      }
 
-        .timeline {
-          display: flex;
-          border-bottom: 1px solid #ddd;
-          background: #f8f9fa;
-          margin-left: 150px;
-          position: sticky;
-          top: 0;
-          z-index: 2;
-        }
+      .roster-control-button {
+        background: #44475a;
+        color: #f8f8f2;
+        border: 1px solid #6272a4;
+        padding: 5px 10px;
+        border-radius: 5px;
+        cursor: pointer;
+        transition: background-color 0.2s ease;
+        font-size: 0.9rem;
+      }
+      .roster-control-button:hover {
+        background: #6272a4;
+      }
 
-        .timeline-cell {
-          min-width: 50px;
-          height: 50px;
-          border-right: 1px solid #eee;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          font-size: 0.8rem;
-          color: #666;
-          padding: 5px;
-        }
+      .gantt-scroll-container {
+        flex: 1;
+        overflow: auto;
+        position: relative;
+        border: 1px solid var(--border-dark);
+        margin: 20px;
+        border-radius: var(--border-radius);
+        background: rgba(68, 71, 90, 0.5);
+      }
 
-        .roster {
-          display: flex;
-          flex-direction: column;
-        }
+      .gantt-content {
+        display: flex;
+        flex-direction: column;
+        min-width: fit-content;
+      }
 
-        .worker-row {
-          display: flex;
-          min-height: 60px;
-          border-bottom: 1px solid #eee;
-          position: relative;
-        }
+      .timeline {
+        display: flex;
+        border-bottom: 1px solid var(--border-dark);
+        background: rgba(40, 42, 54, 0.8);
+        margin-left: 150px;
+        position: sticky;
+        top: 0;
+        z-index: 2;
+      }
 
-        .worker-name {
-          width: 150px;
-          position: sticky;
-          left: 0;
-          background: #f8f9fa;
-          border-right: 1px solid #ddd;
-          display: flex;
-          align-items: center;
-          padding: 0 10px;
-          font-weight: bold;
-          z-index: 1;
-        }
+      .timeline-cell {
+        min-width: 50px;
+        width: 50px;
+        height: 60px;
+        border-right: 1px solid var(--border-dark);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.8rem;
+        color: #a0a8b4;
+        padding: 5px 0;
+        text-align: center;
+        box-sizing: border-box;
+      }
+       .timeline-cell.today { background-color: rgba(189, 147, 249, 0.15); }
+       .timeline-cell.weekend { background-color: rgba(255, 255, 255, 0.03); }
 
-        .shift-container {
-          position: relative;
-          flex-grow: 1;
-          min-height: 60px;
-        }
+      .roster { display: flex; flex-direction: column; }
 
-        .shift {
-          position: absolute;
-          height: 40px;
-          top: 50%;
-          transform: translateY(-50%);
-          border-radius: 4px;
-          cursor: pointer;
-          transition: all 0.2s ease;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          color: white;
-          font-size: 0.8rem;
-          box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
+      .worker-row {
+        display: flex;
+        min-height: 60px;
+        border-bottom: 1px solid var(--border-dark);
+        position: relative;
+      }
 
-        .shift:hover {
-          transform: translateY(-50%) scale(1.05);
-          z-index: 2;
-          box-shadow: 0 4px 8px rgba(0,0,0,0.2);
-        }
+      .worker-name {
+        width: 150px;
+        min-width: 150px;
+        position: sticky;
+        left: 0;
+        background: rgba(40, 42, 54, 0.8);
+        border-right: 1px solid var(--border-dark);
+        display: flex;
+        align-items: center;
+        padding: 0 15px;
+        font-weight: 500;
+        z-index: 1;
+        color: #f8f8f2;
+        box-sizing: border-box;
+      }
 
-        .shift.day {
-          background-color: #4CAF50;
-        }
+      .shift-container {
+        position: relative;
+        flex-grow: 1;
+        display: flex;
+        min-height: 60px;
+      }
 
-        .shift.night {
-          background-color: #2196F3;
-        }
-
-        .shift.daily {
+      .roster-grid-cell {
+        width: 50px;
+        min-width: 50px;
+        height: 60px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+        cursor: pointer;
+        border-right: 1px solid var(--border-dark);
+        background: transparent;
+        box-sizing: border-box;
+        transition: background-color 0.15s ease;
+      }
+      .roster-grid-cell:hover {
+        background-color: rgba(255, 255, 255, 0.05);
+      }
+       .roster-grid-cell.weekend { background-color: rgba(255, 255, 255, 0.02); }
+       .roster-grid-cell.today { background-color: rgba(189, 147, 249, 0.1); }
+       .roster-grid-cell .plus-btn {
+          color: #6272a4;
+          font-size: 1.2rem;
+          opacity: 0.6;
+          pointer-events: none;
+          transition: opacity 0.2s ease;
+       }
+      .roster-grid-cell:hover .plus-btn {
           opacity: 1;
-        }
+      }
 
-        .shift.hourly {
-          opacity: 0.7;
-        }
+      .roster-grid-cell.selected {
+        outline: none;
+        background-color: rgba(139, 233, 253, 0.2);
+        box-shadow: inset 0 0 0 2px rgba(139, 233, 253, 0.6);
+        border-radius: 4px;
+      }
 
-        .modal {
-          display: none;
-          position: fixed;
-          top: 0;
-          left: 0;
+      .shift {
+        width: 40px;
+        height: 40px;
+        position: relative;
+        transform: none;
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 0.9rem;
+        font-weight: 500;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        pointer-events: none;
+        margin: auto;
+      }
+
+      .shift.day { background-color: #50fa7b; color: #282a36; }
+      .shift.rdo { background-color: #ffb86c; color: #282a36; opacity: 0.9; }
+
+      .loading-overlay {
+        position: absolute;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background-color: rgba(40, 42, 54, 0.7);
+        color: #f8f8f2;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.2rem;
+        z-index: 10;
+        backdrop-filter: blur(3px);
+        -webkit-backdrop-filter: blur(3px);
+      }
+      .roster-root-container.loading .loading-overlay {
+        display: flex;
+      }
+
+      .cell-context-menu {
+        background-color: rgba(40, 42, 54, 0.95);
+        color: #f8f8f2;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 8px;
+        box-shadow: 0 5px 25px rgba(0, 0, 0, 0.4);
+        padding: 0;
+        z-index: 1001;
+        min-width: 200px;
+        max-width: 280px;
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.9rem;
+        transition: opacity 0.15s ease-out;
+      }
+      .context-menu-header {
+        padding: 10px 15px;
+        font-weight: bold;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        color: #bd93f9;
+      }
+      .context-menu-section {
+        padding: 15px;
+      }
+      .context-menu-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+       .context-menu-notes {
+           border-top: 1px solid rgba(255, 255, 255, 0.1);
+       }
+       .context-menu-notes label {
+           display: block;
+           margin-bottom: 6px;
+           font-size: 0.85rem;
+           color: #a0a8b4;
+       }
+      .context-menu-notes textarea {
           width: 100%;
-          height: 100%;
-          background: rgba(0,0,0,0.5);
-          z-index: 1000;
-        }
-
-        .modal-content {
-          background: white;
-          margin: 10% auto;
-          padding: 20px;
-          width: 80%;
-          max-width: 600px;
+          background-color: rgba(68, 71, 90, 0.8);
+          color: #f8f8f2;
+          border: 1px solid rgba(255, 255, 255, 0.15);
           border-radius: 4px;
-          position: relative;
-        }
-
-        .close {
-          position: absolute;
-          right: 10px;
-          top: 10px;
-          font-size: 24px;
+          padding: 8px;
+          box-sizing: border-box;
+          font-family: inherit;
+          resize: vertical;
+          min-height: 60px;
+          margin-bottom: 8px;
+      }
+      .context-menu-notes textarea:focus {
+          outline: none;
+          border-color: #bd93f9;
+          box-shadow: 0 0 0 2px rgba(189, 147, 249, 0.3);
+      }
+      .context-menu-button {
+          background: transparent;
+          color: #f8f8f2;
+          border: 1px solid rgba(255, 255, 255, 0.2);
+          padding: 8px 12px;
+          border-radius: 5px;
           cursor: pointer;
-        }
-
-        .error-message {
-          background: #fee;
-          color: #c00;
-          padding: 10px;
-          margin: 20px;
-          border-radius: 4px;
           text-align: center;
-        }
+          width: 100%;
+          transition: background-color 0.2s ease, border-color 0.2s ease;
+          font-size: 0.9rem;
+      }
+      .context-menu-button:hover {
+          background-color: rgba(255, 255, 255, 0.1);
+          border-color: rgba(255, 255, 255, 0.3);
+      }
+      .context-menu-button.button-work { border-color: #50fa7b; color: #50fa7b; }
+       .context-menu-button.button-work:hover { background-color: rgba(80, 250, 123, 0.15); }
+      .context-menu-button.button-rdo { border-color: #ffb86c; color: #ffb86c; }
+       .context-menu-button.button-rdo:hover { background-color: rgba(255, 184, 108, 0.15); }
+      .context-menu-button.button-remove { border-color: #ff5555; color: #ff5555; }
+       .context-menu-button.button-remove:hover { background-color: rgba(255, 85, 85, 0.15); }
+      .context-menu-button.button-save { border-color: #bd93f9; color: #bd93f9; }
+       .context-menu-button.button-save:hover { background-color: rgba(189, 147, 249, 0.15); }
 
-        button {
-          background: #007bff;
-          color: white;
-          border: none;
-          padding: 8px 16px;
-          border-radius: 4px;
-          cursor: pointer;
-        }
+       .bulk-action-menu {
+           position: absolute;
+           opacity: 0;
+           flex-direction: column;
+           min-width: 180px;
+           background-color: rgba(40, 42, 54, 0.95);
+           color: #f8f8f2;
+           border: 1px solid rgba(255, 255, 255, 0.1);
+           border-radius: 8px;
+           box-shadow: 0 5px 25px rgba(0, 0, 0, 0.4);
+           padding: 8px 15px;
+           z-index: 9999;
+           display: flex;
+           gap: 8px;
+           align-items: stretch;
+           backdrop-filter: blur(10px);
+           -webkit-backdrop-filter: blur(10px);
+           font-family: 'JetBrains Mono', monospace;
+       }
+       .bulk-menu-counter {
+           font-weight: bold;
+           color: #bd93f9;
+           text-align: center;
+           padding-bottom: 8px;
+           border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+           font-size: 0.9rem;
+       }
+       .bulk-menu-button {
+           background: transparent;
+           color: #f8f8f2;
+           border: 1px solid rgba(255, 255, 255, 0.2);
+           padding: 6px 10px;
+           border-radius: 5px;
+           cursor: pointer;
+           text-align: center;
+           transition: background-color 0.2s ease, border-color 0.2s ease;
+           font-size: 0.85rem;
+       }
+       .bulk-menu-button:hover {
+           background-color: rgba(255, 255, 255, 0.1);
+           border-color: rgba(255, 255, 255, 0.3);
+       }
+       .bulk-menu-button.button-work { border-color: #50fa7b; color: #50fa7b; }
+       .bulk-menu-button.button-work:hover { background-color: rgba(80, 250, 123, 0.15); }
+       .bulk-menu-button.button-rdo { border-color: #ffb86c; color: #ffb86c; }
+       .bulk-menu-button.button-rdo:hover { background-color: rgba(255, 184, 108, 0.15); }
+       .bulk-menu-button.button-remove { border-color: #ff5555; color: #ff5555; }
+       .bulk-menu-button.button-remove:hover { background-color: rgba(255, 85, 85, 0.15); }
 
-        button:hover {
-          background: #0056b3;
-        }
-      `;
-      document.head.appendChild(style);
-    }
+       /* Single Load More Button Styling */
+       .load-more-button {
+           position: absolute;
+           /* Vertical Centering */
+           top: 50%;
+           transform: translateY(-50%);
+           /* --- */
+           padding: 8px 15px;
+           background: #44475a; /* Match control buttons */
+           color: #f8f8f2;
+           border: 1px solid #6272a4;
+           border-radius: 5px;
+           cursor: pointer;
+           display: flex;
+           align-items: center;
+           justify-content: center;
+           font-family: 'JetBrains Mono', monospace;
+           font-size: 0.9rem;
+           z-index: 3; /* Above timeline/roster but below menus */
+           transition: background-color 0.2s ease, opacity 0.2s ease, left 0.3s ease-out; /* Added left transition */
+       }
+       .load-more-button:hover {
+            background: #6272a4;
+       }
+       .load-more-button.loading {
+            opacity: 0.6;
+            cursor: default;
+       }
+
+       /* Note Indicator */
+       .roster-grid-cell.has-notes::after {
+           content: '';
+           position: absolute;
+           top: 5px;
+           right: 5px;
+           width: 7px;
+           height: 7px;
+           background-color: #ff79c6; /* Pink color from theme */
+           border-radius: 50%;
+           border: 1px solid rgba(40, 42, 54, 0.5); /* Dark border for contrast */
+           box-shadow: 0 0 3px rgba(255, 121, 198, 0.5);
+           z-index: 1; /* Above shift block if needed */
+       }
+    `;
+    document.head.appendChild(style);
   }
 
   handleCellClick(event) {
-    console.log("[Roster] Cell clicked", event);
-    const cell = event.currentTarget;
-    const worker = cell.dataset.worker;
-    const date = cell.dataset.date;
-    const shiftType = cell.dataset.shiftType;
+    console.log(
+      "[Roster] handleCellClick processing potential click event:",
+      event.type
+    );
+    console.log("[Roster] event.target for handleCellClick:", event.target);
 
-    // Check if modifier keys are pressed (for selection)
-    if (event.shiftKey || event.ctrlKey || event.metaKey) {
-      // This is a selection action, not a menu action
-      // Don't prevent default for selections
-      return; // Let the selection handlers handle this
+    document.getElementById("bulk-action-menu")?.remove();
+
+    const cell = event.target.closest(".roster-grid-cell");
+    console.log(
+      "[Roster] handleCellClick - result of closest('.roster-grid-cell'):",
+      cell
+    );
+
+    if (!cell) {
+      console.error("[Roster] handleCellClick called but couldn't find cell.");
+      return;
     }
 
-    // For normal clicks (no modifier keys), show the menu
-    event.preventDefault();
-    event.stopPropagation();
-    this.clearSelection(); // Clear any existing selection
-    this.showCellMenu(cell, worker, date, shiftType);
+    const worker = cell.dataset.worker;
+    const date = cell.dataset.date;
+
+    if (!worker || !date) {
+      console.error(
+        "[Roster] Cell missing worker or date data in handleCellClick:",
+        cell
+      );
+      return;
+    }
+    console.log(
+      `[Roster] Processing CLICK for menu: Worker=${worker}, Date=${date}`
+    );
+
+    this.selectedCells.clear();
+
+    const shift = this.shifts.find(
+      (s) =>
+        s.worker_name === worker &&
+        new Date(s.shift_date).toDateString() === new Date(date).toDateString()
+    );
+    console.log("[Roster] Found shift for cell menu:", shift);
+
+    this.showCellMenu(worker, date, shift, cell, event);
   }
 
   setupSelectionHandlers() {
-    // Reset selection state
-    this.selectedCells = new Set();
-    this.selectionStart = null;
-    this.isSelecting = false;
-
-    // Clear the selection when clicking outside the grid or menus
-    document.addEventListener("click", (e) => {
-      // Don't clear if clicking inside a cell, the cell menu, or the bulk menu
-      if (
-        e.target.closest(".cell") ||
-        e.target.closest(".cell-menu") ||
-        e.target.closest(".bulk-action-menu")
-      ) {
-        return;
-      }
-
-      this.clearSelection();
-    });
-
-    // Update mousedown handler
-    this.container.querySelectorAll(".cell").forEach((cell) => {
-      cell.addEventListener("mousedown", (e) => {
-        // Only handle selection if a modifier key is pressed
-        if (e.shiftKey || e.ctrlKey || e.metaKey) {
-          e.preventDefault(); // Prevent text selection
-          this.isSelecting = true;
-
-          if (e.shiftKey && this.selectionStart) {
-            // Shift+click: select range from last selected to current
-            this.selectRange(this.selectionStart, cell);
-          } else {
-            // Ctrl/Cmd+click: add to selection
-            this.toggleCellSelection(cell);
-            this.selectionStart = cell;
-          }
-
-          this.renderBulkActionMenu();
-        }
-      });
-
-      // Update other event listeners to check for selection mode
-      cell.addEventListener("mouseenter", (e) => {
-        if (this.isSelecting && e.buttons === 1) {
-          this.toggleCellSelection(cell, true); // Force add to selection
-          this.renderBulkActionMenu();
-        }
-      });
-    });
-
-    // Handle mouseup to end selection
-    document.addEventListener("mouseup", () => {
-      this.isSelecting = false;
-    });
+    console.warn(
+      "[Roster] setupSelectionHandlers function called but might be redundant."
+    );
   }
 
   setupEventListeners() {
-    // ... existing code ...
+    console.warn(
+      "[Roster] setupEventListeners function called - ensure listeners aren't duplicated."
+    );
+  }
 
-    this.container.querySelectorAll(".cell").forEach((cell) => {
-      // First add the click handler for the menu
-      cell.addEventListener("click", this.handleCellClick.bind(this));
+  async appendNextMonth() {
+    if (this.isLoadingMore) return;
 
-      // Then setup the selection handlers
-      // The selection handlers will only trigger when modifier keys are pressed
+    console.log("[Roster] Appending next month...");
+    this.isLoadingMore = true;
+    const loadMoreButton = this.container.querySelector("#load-more-roster");
+    if (loadMoreButton) loadMoreButton.classList.add("loading");
+
+    // --- Calculate range for the *new* month ---
+    const currentViewEndMonth = new Date(this.viewStartDate);
+    currentViewEndMonth.setMonth(
+      currentViewEndMonth.getMonth() + this.viewRange
+    );
+    const appendStartDate = new Date(currentViewEndMonth);
+    appendStartDate.setDate(1);
+
+    const appendEndDate = new Date(appendStartDate);
+    appendEndDate.setMonth(appendEndDate.getMonth() + 1);
+    appendEndDate.setDate(0); // End of the new month
+
+    // --- Check if data fetch is needed for this new month ---
+    const needsFetch =
+      !this.fetchedRange.end || appendEndDate > this.fetchedRange.end;
+    if (needsFetch) {
+      console.log("[Roster] Fetching additional data for appended month...");
+      // Define a fetch range - ideally fetch a bit more ahead
+      const fetchMoreStartDate = new Date(
+        this.fetchedRange.end || appendStartDate
+      );
+      // Ensure start date is adjusted if needed (e.g., +1 day from last fetch end)
+      fetchMoreStartDate.setDate(fetchMoreStartDate.getDate() + 1);
+
+      const fetchMoreEndDate = new Date(appendEndDate);
+      fetchMoreEndDate.setMonth(fetchMoreEndDate.getMonth() + 6); // Fetch 6 more months
+
+      try {
+        const apiShifts = await rosterApi.getShifts(
+          fetchMoreStartDate,
+          fetchMoreEndDate
+        );
+        if (apiShifts && apiShifts.length > 0) {
+          // Merge new shifts with existing ones, avoiding duplicates
+          const existingIds = new Set(this.allShifts.map((s) => s.id));
+          const newUniqueShifts = apiShifts.filter(
+            (s) => !existingIds.has(s.id)
+          );
+          this.allShifts.push(...newUniqueShifts);
+          // Update fetched range end *only* if new data was actually fetched and merged
+          this.fetchedRange.end = fetchMoreEndDate;
+          console.log(
+            `[Roster] Fetched ${
+              newUniqueShifts.length
+            } new shifts. Updated fetchedRange end: ${this.fetchedRange.end.toISOString()}`
+          );
+        } else {
+          console.log("[Roster] No new shifts found in fetched range.");
+          // Still update fetched range end to avoid re-fetching the same empty range
+          if (
+            !this.fetchedRange.end ||
+            fetchMoreEndDate > this.fetchedRange.end
+          ) {
+            this.fetchedRange.end = fetchMoreEndDate;
+          }
+        }
+      } catch (error) {
+        console.error("[Roster] Error fetching additional data:", error);
+        this.showError("Failed to load data for next month.");
+        if (loadMoreButton) loadMoreButton.classList.remove("loading");
+        this.isLoadingMore = false;
+        return; // Stop appending if fetch fails
+      }
+    }
+
+    // --- Append cells ---
+    const timeline = this.container.querySelector("#timeline");
+    const roster = this.container.querySelector("#roster");
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    let currentDate = new Date(appendStartDate);
+    const datesToAppend = [];
+    while (currentDate <= appendEndDate) {
+      datesToAppend.push(new Date(currentDate));
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+
+    // Filter shifts for the new month once
+    const appendStartStr = appendStartDate.toISOString().split("T")[0];
+    const appendEndStr = appendEndDate.toISOString().split("T")[0];
+    const shiftsForNewMonth = this.allShifts.filter((shift) => {
+      return (
+        shift.shift_date >= appendStartStr && shift.shift_date <= appendEndStr
+      );
     });
 
-    this.setupSelectionHandlers();
+    // Remove button before appending to avoid it shifting during DOM updates
+    if (loadMoreButton) loadMoreButton.remove();
 
-    // ... existing code ...
+    // Append to timeline
+    datesToAppend.forEach((date) => {
+      const cell = document.createElement("div");
+      cell.className = "timeline-cell";
+      cell.style.width = "50px";
+      cell.style.minWidth = "50px";
+      cell.style.height = "60px";
+      cell.style.borderRight = "1px solid var(--border-dark)";
+      cell.style.display = "flex";
+      cell.style.flexDirection = "column";
+      cell.style.alignItems = "center";
+      cell.style.justifyContent = "center";
+      cell.style.gap = "2px";
+      cell.style.boxSizing = "border-box";
+
+      const dayName = date.toLocaleString("default", { weekday: "short" });
+      const dayLabel = document.createElement("div");
+      dayLabel.textContent = dayName;
+      dayLabel.style.fontSize = "0.7rem";
+      dayLabel.style.color = "#a0a8b4";
+      cell.appendChild(dayLabel);
+
+      const dateNum = document.createElement("div");
+      dateNum.textContent = date.getDate();
+      dateNum.style.fontSize = "0.9rem";
+      cell.appendChild(dateNum);
+
+      if (date.getDate() === 1) {
+        const monthName = date.toLocaleString("default", { month: "short" });
+        const monthLabel = document.createElement("div");
+        monthLabel.textContent = monthName;
+        monthLabel.style.fontSize = "0.7rem";
+        monthLabel.style.opacity = "0.7";
+        cell.appendChild(monthLabel);
+      }
+
+      if (date.getTime() === today.getTime()) {
+        cell.classList.add("today");
+        cell.style.backgroundColor = "rgba(189, 147, 249, 0.15)";
+        cell.style.fontWeight = "bold";
+      }
+      const dayOfWeek = date.getDay();
+      if (dayOfWeek === 0 || dayOfWeek === 6) {
+        cell.classList.add("weekend");
+        cell.style.backgroundColor = "rgba(255, 255, 255, 0.03)";
+      }
+
+      timeline.appendChild(cell);
+    });
+    // Update timeline width AFTER appending all cells for the month
+    timeline.style.minWidth = `${
+      parseInt(timeline.style.minWidth || "0") + datesToAppend.length * 50
+    }px`;
+
+    // Append to roster rows
+    this.workers.forEach((worker) => {
+      const row = roster.querySelector(`.worker-row[data-worker="${worker}"]`);
+      const shiftContainer = row?.querySelector(".shift-container");
+      if (shiftContainer) {
+        console.log(
+          `[Roster Append] Found shiftContainer for worker: ${worker}`
+        );
+        datesToAppend.forEach((cellDate) => {
+          const cellDateStr = cellDate.toISOString().split("T")[0];
+          const cellKey = `${worker}|${cellDateStr}`;
+
+          // Find shift using the pre-filtered list for the new month
+          const shift = shiftsForNewMonth.find(
+            (s) => s.worker_name === worker && s.shift_date === cellDateStr
+          );
+
+          const cell = document.createElement("div");
+          cell.className = "roster-grid-cell cell";
+          cell.style.width = "50px";
+          cell.style.minWidth = "50px";
+          cell.style.height = "60px";
+          cell.style.display = "flex";
+          cell.style.alignItems = "center";
+          cell.style.justifyContent = "center";
+          cell.style.position = "relative";
+          cell.style.cursor = "pointer";
+          cell.style.borderRight = "1px solid var(--border-dark)";
+          cell.style.background = "transparent";
+          cell.style.boxSizing = "border-box";
+
+          cell.setAttribute("data-worker", worker);
+          cell.setAttribute("data-date", cellDateStr);
+          cell.setAttribute("data-key", cellKey);
+
+          // Add weekend/today highlights (match renderRoster)
+          if (cellDate.getTime() === today.getTime()) {
+            cell.classList.add("today");
+            cell.style.background = "rgba(189, 147, 249, 0.1)";
+            cell.style.fontWeight = "bold";
+          }
+          const dayOfWeek = cellDate.getDay();
+          if (dayOfWeek === 0 || dayOfWeek === 6) {
+            cell.classList.add("weekend");
+            cell.style.background = "rgba(255, 255, 255, 0.02)";
+          }
+
+          // Attach event listeners
+          this.attachCellEventListeners(cell, cellKey);
+
+          // Render shift block or plus button (match renderRoster)
+          if (shift) {
+            const shiftBlock = document.createElement("div");
+            shiftBlock.className = shift.is_working ? `shift day` : `shift rdo`;
+            shiftBlock.style.width = "40px";
+            shiftBlock.style.height = "40px";
+            shiftBlock.style.borderRadius = "4px";
+            shiftBlock.style.display = "flex";
+            shiftBlock.style.alignItems = "center";
+            shiftBlock.style.justifyContent = "center";
+            shiftBlock.style.fontSize = "0.9rem";
+            shiftBlock.style.fontWeight = "500";
+            shiftBlock.style.boxShadow = "0 1px 3px rgba(0,0,0,0.2)";
+            shiftBlock.style.pointerEvents = "none";
+            shiftBlock.style.margin = "auto";
+            shiftBlock.textContent = shift.is_working ? "D" : "RDO";
+            cell.appendChild(shiftBlock);
+          } else {
+            const plusBtn = document.createElement("span");
+            plusBtn.className = "plus-btn";
+            plusBtn.textContent = "+";
+            cell.appendChild(plusBtn);
+          }
+
+          shiftContainer.appendChild(cell);
+        });
+      } else {
+        console.error(
+          `[Roster Append] Could not find shiftContainer for worker: ${worker}`
+        );
+      }
+    });
+
+    // --- Update State and UI ---
+    this.createOrUpdateLoadMoreButton();
+    this.viewRange += 1;
+    this.isLoadingMore = false;
+    console.log(
+      "[Roster] Finished appending month. New viewRange:",
+      this.viewRange
+    );
+  }
+
+  createOrUpdateLoadMoreButton() {
+    const ganttContent = this.container.querySelector(".gantt-content");
+    if (!ganttContent) return;
+
+    let button = ganttContent.querySelector("#load-more-roster");
+    if (!button) {
+      button = document.createElement("button");
+      button.id = "load-more-roster";
+      button.className = "load-more-button";
+      button.innerHTML = "<span>+1 Month →</span>";
+      button.title = "Load next month";
+      button.addEventListener("click", () => this.appendNextMonth());
+      ganttContent.appendChild(button);
+    }
+
+    // Calculate position based on current content width
+    const timeline = ganttContent.querySelector("#timeline");
+    const nameColumnWidth = 150;
+    const currentTimelineWidth = timeline ? timeline.offsetWidth : 0;
+    const buttonLeftPosition = nameColumnWidth + currentTimelineWidth + 10; // 10px buffer
+
+    button.style.left = `${buttonLeftPosition}px`;
+    // Center vertically within the parent (gantt-content)
+    button.style.top = "50%";
+    button.style.transform = "translateY(-50%)";
+  }
+
+  // Helper function to attach listeners (extract from renderRoster)
+  attachCellEventListeners(cell, cellKey) {
+    let isDragging = false;
+    let startX, startY, startTime;
+
+    cell.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+
+      // --- Ctrl/Meta Click ---
+      if (e.ctrlKey || e.metaKey) {
+        console.log("[Roster] mousedown with Ctrl/Meta");
+        this.selectedCells.add(cellKey);
+        this.render();
+        this.renderBulkActionMenu(e);
+        return;
+      }
+
+      // --- Shift Click ---
+      if (e.shiftKey && this.selectionStart) {
+        console.log("[Roster] mousedown with Shift");
+        e.preventDefault();
+        const startWorker = this.selectionStart.split("|")[0];
+        const currentWorker = cellKey.split("|")[0];
+        if (startWorker === currentWorker) {
+          this.selectRange(this.selectionStart, cellKey);
+          this.renderBulkActionMenu(e);
+        }
+        return;
+      }
+
+      // --- Normal Click / Drag Start ---
+      e.preventDefault();
+      isDragging = false;
+      startX = e.clientX;
+      startY = e.clientY;
+      startTime = Date.now();
+      this.isSelecting = true;
+      this.selectionStart = cellKey;
+
+      this.selectedCells.clear();
+      this.selectedCells.add(cellKey);
+      this.render();
+
+      const tempMouseMove = (moveEvent) => {
+        if (
+          !isDragging &&
+          (Math.abs(moveEvent.clientX - startX) > 5 ||
+            Math.abs(moveEvent.clientY - startY) > 5)
+        ) {
+          console.log(`[Roster] Drag detected on cell: ${cellKey}`);
+          isDragging = true;
+        }
+        if (isDragging) {
+          const startWorker = this.selectionStart?.split("|")[0];
+          const currentCell = moveEvent.target.closest(".roster-grid-cell");
+          if (currentCell && startWorker) {
+            const currentKey = currentCell.dataset.key;
+            const currentWorker = currentCell.dataset.worker;
+            if (currentKey && currentWorker === startWorker) {
+              this.selectRange(this.selectionStart, currentKey);
+            }
+          }
+        }
+      };
+
+      const tempMouseUp = (upEvent) => {
+        document.removeEventListener("mousemove", tempMouseMove);
+        document.removeEventListener("mouseup", tempMouseUp);
+
+        const timeElapsed = Date.now() - startTime;
+
+        if (!isDragging && timeElapsed < 300) {
+          console.log(
+            `[Roster] Treating interaction as CLICK on cell: ${cellKey}`
+          );
+          this.isSelecting = false;
+          this.handleCellClick(upEvent);
+        } else {
+          console.log(
+            `[Roster] Finalizing drag/long press on cell: ${cellKey}`
+          );
+          this.isSelecting = false;
+          if (this.selectedCells.size > 1) {
+            this.renderBulkActionMenu(upEvent);
+          }
+        }
+      };
+
+      document.addEventListener("mousemove", tempMouseMove);
+      document.addEventListener("mouseup", tempMouseUp);
+    });
   }
 }

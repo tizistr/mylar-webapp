@@ -10,7 +10,6 @@
       href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css" />
     <link
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css"
@@ -158,6 +157,8 @@
         margin: 1rem 0;
       }
     </style>
+    <script type="module" crossorigin src="/assets/index-XKAoLoTg.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DyUH7PPk.css">
   </head>
   <body>
     <div id="root"></div>
@@ -333,75 +334,5 @@
       </main>
     </div>
 
-    <script type="module">
-      // Debug console functionality
-      const debugConsole = document.getElementById("debug-console");
-      const debugMessages = document.getElementById("debug-messages");
-
-      // Override console.log and console.error
-      const originalLog = console.log;
-      const originalError = console.error;
-
-      function addMessage(type, args) {
-        const timestamp = new Date().toLocaleTimeString();
-        const message = args
-          .map((arg) =>
-            typeof arg === "object" ? JSON.stringify(arg, null, 2) : String(arg)
-          )
-          .join(" ");
-
-        const div = document.createElement("div");
-        div.innerHTML = `<span class="timestamp">[${timestamp}]</span> <span class="${type}-message">${message}</span>`;
-        debugMessages.appendChild(div);
-        debugMessages.scrollTop = debugMessages.scrollHeight;
-      }
-
-      console.log = function (...args) {
-        originalLog.apply(console, args);
-        addMessage("log", args);
-      };
-
-      console.error = function (...args) {
-        originalError.apply(console, args);
-        addMessage("error", args);
-      };
-
-      // Test the console
-      console.log("Debug console initialized");
-
-      // Wait for DOM to be fully loaded
-      document.addEventListener("DOMContentLoaded", async () => {
-        try {
-          console.log("DOM fully loaded");
-
-          // Import navigation
-          const { NavigationManager } = await import(
-            "/components/navigation.js"
-          );
-          console.log("Navigation module loaded");
-
-          // Initialize theme
-          const html = document.documentElement;
-          const savedTheme = localStorage.getItem("theme") || "light";
-          html.dataset.theme = savedTheme;
-          console.log("Theme initialized:", savedTheme);
-
-          // Create navigation manager
-          window.navigationManager = new NavigationManager();
-          console.log("Navigation manager initialized");
-
-          // Theme toggle
-          const themeToggle = document.querySelector(".theme-toggle");
-          themeToggle?.addEventListener("click", () => {
-            const newTheme = html.dataset.theme === "light" ? "dark" : "light";
-            html.dataset.theme = newTheme;
-            localStorage.setItem("theme", newTheme);
-            console.log("Theme changed to:", newTheme);
-          });
-        } catch (error) {
-          console.error("Failed to initialize application:", error);
-        }
-      });
-    </script>
   </body>
 </html>

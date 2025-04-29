@@ -138,8 +138,8 @@ input[type="button"] {
   position: relative;
   border-radius: var(--border-radius);
   white-space: nowrap;
-  backdrop-filter: blur(5px);
-  -webkit-backdrop-filter: blur(5px);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
 }
 
 .nav-button:hover {
@@ -239,8 +239,8 @@ input[type="button"] {
   margin-left: var(--spacing-md);
   padding-left: var(--spacing-sm);
   border-left: 1px solid var(--border-light);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
 }
 
 .nav-subsection.active {
@@ -783,36 +783,42 @@ input[type="button"] {
 /* Responsive Design */
 @media (max-width: var(--breakpoint-tablet)) {
   .app-container {
-    grid-template-columns: 1fr;
+    flex-direction: column;
     padding: var(--spacing-sm);
+    min-height: calc(100vh - var(--header-height) - var(--spacing-sm) * 2);
   }
 
   .sidebar {
-    position: fixed;
-    left: 0;
-    top: var(--header-height);
-    bottom: 0;
-    width: var(--sidebar-width);
-    transform: translateX(-100%);
-    z-index: 100;
-    transition: transform var(--transition-speed) var(--transition-easing);
+    width: 100%;
+    position: relative;
+    top: 0;
+    max-height: none;
+    min-width: initial;
+    box-shadow: none;
+    order: 1;
   }
 
-  .sidebar.active {
-    transform: translateX(0);
+  .nav-button {
+    width: 100%;
   }
 
   .content {
+    width: 100%;
     margin-left: 0;
     padding: var(--spacing-md);
+    order: 2;
   }
 
   .app-header {
-    padding: 0 var(--spacing-md);
+    padding: 0 var(--spacing-sm);
   }
 
   .company-name {
-    font-size: 1.5rem;
+    font-size: 1.1rem;
+  }
+
+  .samples-list {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -1328,7 +1334,7 @@ input[type="button"] {
 .close-modal {
   margin-top: 10px;
   padding: 8px 16px;
-  background: var(--background-light);
+  background: var(--background-color);
   border: none;
   border-radius: 4px;
   cursor: pointer;

@@ -20,82 +20,158 @@ export const tables = {
   events: "events",
 };
 
+// --- Caching Configuration ---
+const CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
+
+// --- Caching Helper Functions ---
+function getCachedData(key) {
+  try {
+    const cachedItem = localStorage.getItem(key);
+    if (!cachedItem) {
+      console.log(`[Cache] Miss for key: ${key}`);
+      return null;
+    }
+
+    const { timestamp, data } = JSON.parse(cachedItem);
+    const isExpired = Date.now() - timestamp > CACHE_DURATION_MS;
+
+    if (isExpired) {
+      console.log(`[Cache] Expired for key: ${key}`);
+      localStorage.removeItem(key); // Remove expired item
+      return null;
+    }
+
+    console.log(`[Cache] Hit for key: ${key}`);
+    return data;
+  } catch (error) {
+    console.error(`[Cache] Error reading cache for key ${key}:`, error);
+    localStorage.removeItem(key); // Remove corrupted item
+    return null;
+  }
+}
+
+function setCachedData(key, data) {
+  try {
+    const itemToCache = {
+      timestamp: Date.now(),
+      data: data,
+    };
+    localStorage.setItem(key, JSON.stringify(itemToCache));
+    console.log(`[Cache] Set data for key: ${key}`);
+  } catch (error) {
+    console.error(`[Cache] Error setting cache for key ${key}:`, error);
+    // Handle potential storage quota errors if necessary
+  }
+}
+
+function invalidateCache(key) {
+  try {
+    console.log(`[Cache] Invalidating key: ${key}`);
+    localStorage.removeItem(key);
+  } catch (error) {
+    console.error(`[Cache] Error removing cache for key ${key}:`, error);
+  }
+}
+
 // Data operations for all features
 export const dataOperations = {
   // Projects
   async getProjects() {
-    console.log("Getting projects");
+    const cacheKey = "supabase_cache_projects";
+    const cachedData = getCachedData(cacheKey);
+    if (cachedData) return { data: cachedData, error: null };
+
+    console.log("[API] Getting projects from Supabase");
     const { data, error } = await supabase
       .from(tables.projects)
       .select("*")
       .order("created_at", { ascending: false });
+
     if (error) throw error;
+
+    setCachedData(cacheKey, data);
     return { data, error: null };
   },
 
   async addProject(project) {
-    console.log("Adding project", project);
+    console.log("[API] Adding project", project);
     const { data, error } = await supabase
       .from(tables.projects)
       .insert(project)
       .select()
       .single();
     if (error) throw error;
+    invalidateCache("supabase_cache_projects"); // Invalidate cache on add
     return { data, error: null };
   },
 
   // Samples
   async getSamples(projectId) {
-    console.log("Getting samples for project", projectId);
+    const cacheKey = `supabase_cache_samples_${projectId}`;
+    const cachedData = getCachedData(cacheKey);
+    if (cachedData) return { data: cachedData, error: null };
+
+    console.log("[API] Getting samples for project", projectId);
     const { data, error } = await supabase
       .from(tables.samples)
       .select("*")
       .eq("project_id", projectId)
       .order("created_at", { ascending: false });
     if (error) throw error;
+    setCachedData(cacheKey, data);
     return { data, error: null };
   },
 
   async addSample(sample) {
-    console.log("Adding sample", sample);
+    console.log("[API] Adding sample", sample);
     const { data, error } = await supabase
       .from(tables.samples)
       .insert(sample)
       .select()
       .single();
     if (error) throw error;
+    // Invalidate specific project's sample cache
+    invalidateCache(`supabase_cache_samples_${sample.project_id}`);
+    // Potentially invalidate related project data if needed
     return { data, error: null };
   },
 
   // Events
   async getEvents() {
-    console.log("Getting events");
+    const cacheKey = "supabase_cache_events";
+    const cachedData = getCachedData(cacheKey);
+    if (cachedData) return { data: cachedData, error: null };
+
+    console.log("[API] Getting events from Supabase");
     const { data, error } = await supabase
       .from(tables.events)
       .select("*")
       .order("date", { ascending: true });
     if (error) throw error;
+    setCachedData(cacheKey, data);
     return { data, error: null };
   },
 
   async addEvent(event) {
-    console.log("Adding event", event);
+    console.log("[API] Adding event", event);
     const { data, error } = await supabase
       .from(tables.events)
       .insert(event)
       .select()
       .single();
     if (error) throw error;
+    invalidateCache("supabase_cache_events");
     return { data, error: null };
   },
 
   async deleteEvent(eventId) {
-    console.log("Deleting event", eventId);
+    console.log("[API] Deleting event", eventId);
     const { error } = await supabase
       .from(tables.events)
       .delete()
       .eq("id", eventId);
     if (error) throw error;
+    invalidateCache("supabase_cache_events");
     return { data: null, error: null };
   },
 
